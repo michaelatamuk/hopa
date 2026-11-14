@@ -60,6 +60,22 @@ Both the observation and the action refuse; no false success, no screenshot. Tha
 closes W0's last box: a secure window says "cannot see or touch" and the app
 repeats it.
 
+## Sidecar tests
+
+Six JVM tests cover the files the sidecar owns (ChatStore, PendingApprovals,
+RecordStore). They run without a desktop and are wired into the Android CI job:
+
+```powershell
+cd apps\android
+.\gradlew.bat -p ..\windows\sidecar test --no-daemon
+```
+
+```
+:core:test            (the shared loop and gate fixtures)
+:test                 ChatStoreTest 2, PendingApprovalsTest 2, RecordStoreTest 2
+BUILD SUCCESSFUL
+```
+
 ## Blocked
 
 - The session must be unlocked for `tap`/`type` verification, the screenshots and

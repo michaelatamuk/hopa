@@ -1,0 +1,39 @@
+package com.hopa.sidecar
+
+import java.nio.file.Files
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class ChatStoreTest {
+    @Test
+    fun conversations_survive_a_reload() {
+        val directory = Files.createTempDirectory("hopa-chat")
+        val path = directory.resolve("conversations.json")
+
+        val store = ChatStore(path)
+        val conversation = store.create()
+        store.append(conversation.id, "user", "hello")
+        store.append(conversation.id, "assistant", "hi")
+
+        val reloaded = ChatStore(path)
+        val items = reloaded.list()
+        assertEquals(1, items.size)
+        assertEquals("hello", items[0].title)
+        assertEquals(2, items[0].messages.size)
+        assertEquals("assistant", items[0].messages[1].role)
+    }
+
+    @Test
+    fun a_second_conversation_does_not_touch_the_first() {
+        val directory = Files.createTempDirectory("hopa-chat-two")
+        val store = ChatStore(directory.resolve("conversations.json"))
+        val first = store.create()
+        val second = store.create()
+        store.append(first.id, "user", "one")
+        store.append(second.id, "user", "two")
+
+        assertEquals(2, store.list().size)
+        assertEquals("one", store.get(first.id)?.title)
+        assertEquals("two", store.get(second.id)?.title)
+    }
+}

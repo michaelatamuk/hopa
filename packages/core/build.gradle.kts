@@ -9,7 +9,9 @@ kotlin {
 
 sourceSets {
     test {
-        resources.srcDir(rootProject.file("../../contracts"))
+        // Relative to this module, so any build that includes it finds the
+        // repository's contracts (the Android build and the Windows sidecar).
+        resources.srcDir(file("../../contracts"))
     }
 }
 

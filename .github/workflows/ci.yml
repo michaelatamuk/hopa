@@ -255,6 +255,9 @@ jobs:
       - name: Core checks and debug APK
         working-directory: apps/android
         run: ./gradlew :core:check :capabilities:test :capabilities-android:testDebugUnitTest :data:test :app:testDebugUnitTest :app:assembleDebug --no-daemon
+      - name: Windows sidecar tests
+        working-directory: apps/android
+        run: ./gradlew -p ../windows/sidecar test --no-daemon
       - name: Android structure
         run: python3 tools/checks/check-android-structure.py
       - name: Upload APK
