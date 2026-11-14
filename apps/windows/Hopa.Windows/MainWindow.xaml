@@ -17,9 +17,17 @@
         </DataTemplate>
         <DataTemplate x:Key="ConversationTemplate">
             <StackPanel Margin="8,7">
-                <TextBlock Text="{Binding Title}" FontSize="14" TextTrimming="CharacterEllipsis"
-                           Foreground="#1C1B18" />
-                <TextBlock Text="{Binding UpdatedLabel}" FontSize="11" Foreground="#9A9488" />
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding Title}" FontSize="14" TextTrimming="CharacterEllipsis"
+                               Foreground="#1C1B18" />
+                    <TextBlock Text="{Binding PinLabel}" FontSize="9" FontWeight="SemiBold"
+                               Foreground="#E8703A" Margin="6,2,0,0" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding UpdatedLabel}" FontSize="11" Foreground="#9A9488" />
+                    <TextBlock Text="{Binding ArchivedLabel}" FontSize="10" Foreground="#9A9488"
+                               Margin="8,0,0,0" />
+                </StackPanel>
             </StackPanel>
         </DataTemplate>
     </Window.Resources>
@@ -46,6 +54,9 @@
                              VerticalContentAlignment="Center"
                              AutomationProperties.Name="Search conversations"
                              TextChanged="SearchBox_TextChanged" />
+                    <CheckBox x:Name="ShowArchivedBox" Content="Show archived" Margin="0,8,0,0"
+                              FontSize="11" Foreground="#6B665C" Click="ShowArchived_Click"
+                              AutomationProperties.Name="Show archived conversations" />
                 </StackPanel>
                 <Button DockPanel.Dock="Bottom" x:Name="SettingsButton" Content="Settings"
                         Margin="12,8,12,12" Height="32" Background="Transparent"
@@ -57,6 +68,8 @@
                          AutomationProperties.Name="Conversations">
                     <ListBox.ContextMenu>
                         <ContextMenu>
+                            <MenuItem Header="Pin / Unpin" Click="Pin_Click" />
+                            <MenuItem Header="Archive / Unarchive" Click="Archive_Click" />
                             <MenuItem Header="Rename" Click="Rename_Click" />
                             <MenuItem Header="Export..." Click="Export_Click" />
                             <MenuItem Header="Delete" Click="Delete_Click" />

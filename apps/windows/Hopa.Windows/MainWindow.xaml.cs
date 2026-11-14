@@ -108,10 +108,10 @@ public partial class MainWindow : Window
             Height = settings.WindowHeight;
         }
 
-        if (!double.IsNaN(settings.WindowLeft) && !double.IsNaN(settings.WindowTop))
+        if (settings.WindowLeft is { } left && settings.WindowTop is { } top)
         {
-            Left = settings.WindowLeft;
-            Top = settings.WindowTop;
+            Left = left;
+            Top = top;
         }
 
         if (settings.WindowMaximized)
@@ -289,6 +289,14 @@ public partial class MainWindow : Window
                 : "FAIL";
             hits = await client.SearchConversationsAsync("Grocer");
             exported = await client.ExportConversationAsync(id);
+            var pinned = (await client.PinConversationAsync(id, true))?["pinned"]?.GetValue<bool>() == true;
+            var archived = (await client.ArchiveConversationAsync(id, true))?["archivedAt"]?.GetValue<long>() > 0;
+            var hidden = !(await client.ListConversationsAsync(false))
+                .Any(item => item["id"]?.GetValue<string>() == id);
+            var shown = (await client.ListConversationsAsync(true))
+                .Any(item => item["id"]?.GetValue<string>() == id);
+            lines.Add($"pin: {pinned}");
+            lines.Add($"archive: {archived}; hidden: {hidden}; shown when asked: {shown}");
             deleted = await client.DeleteConversationAsync(id);
             remaining = (await client.ListConversationsAsync()).Count;
         }
@@ -449,7 +457,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var items = await client.ListConversationsAsync();
+        var items = await client.ListConversationsAsync(ShowArchivedBox.IsChecked == true);
         allConversations.Clear();
         foreach (var item in items)
         {
@@ -594,10 +602,17 @@ public partial class MainWindow : Window
         {
             existing.Title = title;
             existing.UpdatedLabel = "now";
+            existing.UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             return;
         }
 
-        var created = new ConversationVm { Id = id, Title = title, UpdatedLabel = "now" };
+        var created = new ConversationVm
+        {
+            Id = id,
+            Title = title,
+            UpdatedLabel = "now",
+            UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        };
         allConversations.Insert(0, created);
         if (SearchBox.Text.Trim().Length == 0)
         {
@@ -610,13 +625,79 @@ public partial class MainWindow : Window
     private void ApplyFilter()
     {
         var query = SearchBox.Text.Trim();
+        var showArchived = ShowArchivedBox.IsChecked == true;
+        var ordered = allConversations
+            .OrderByDescending(item => item.Pinned)
+            .ThenByDescending(item => item.UpdatedAt)
+            .ToList();
         conversations.Clear();
-        foreach (var conversation in allConversations)
+        foreach (var conversation in ordered)
         {
+            if (!showArchived && conversation.Archived)
+            {
+                continue;
+            }
+
             if (query.Length == 0 ||
                 conversation.SearchText.Contains(query, StringComparison.OrdinalIgnoreCase))
             {
                 conversations.Add(conversation);
+            }
+        }
+    }
+
+    private async void ShowArchived_Click(object sender, RoutedEventArgs e)
+    {
+        if (client == null)
+        {
+            return;
+        }
+
+        var items = await client.ListConversationsAsync(ShowArchivedBox.IsChecked == true);
+        allConversations.Clear();
+        foreach (var item in items)
+        {
+            allConversations.Add(ToVm(item));
+        }
+
+        ApplyFilter();
+    }
+
+    private async void Pin_Click(object sender, RoutedEventArgs e)
+    {
+        if (client == null || ConversationList.SelectedItem is not ConversationVm vm)
+        {
+            return;
+        }
+
+        var pinned = !vm.Pinned;
+        if (await client.PinConversationAsync(vm.Id, pinned) != null)
+        {
+            vm.Pinned = pinned;
+            ApplyFilter();
+        }
+    }
+
+    private async void Archive_Click(object sender, RoutedEventArgs e)
+    {
+        if (client == null || ConversationList.SelectedItem is not ConversationVm vm)
+        {
+            return;
+        }
+
+        var archived = !vm.Archived;
+        if (await client.ArchiveConversationAsync(vm.Id, archived) != null)
+        {
+            vm.Archived = archived;
+            ApplyFilter();
+            if (archived && !ShowArchivedBox.IsChecked.GetValueOrDefault() && currentId == vm.Id)
+            {
+                currentId = null;
+                messages.Clear();
+                if (allConversations.Any(item => !item.Archived))
+                {
+                    await SelectAsync(allConversations.First(item => !item.Archived).Id);
+                }
             }
         }
     }
@@ -977,8 +1058,11 @@ public partial class MainWindow : Window
             Id = item["id"]?.GetValue<string>() ?? "",
             Title = title,
             UpdatedLabel = FormatTime(updatedAt),
+            UpdatedAt = updatedAt,
             MessageCount = (item["messages"] as JsonArray)?.Count ?? 0,
             SearchText = string.Join("\n", searchParts),
+            Pinned = item["pinned"]?.GetValue<bool>() == true,
+            Archived = (item["archivedAt"]?.GetValue<long>() ?? 0) > 0,
         };
     }
 

@@ -25,6 +25,8 @@ headlessly; the visual checks wait for an unlocked desktop.
 
 ```
 Hopa.Windows.exe --history-check out.txt
+pin: True
+archive: True; hidden: True; shown when asked: True
 created: ok
 renamed: Groceries
 search hits: 1
@@ -33,7 +35,9 @@ delete: True
 conversations left: 5
 ```
 
-The six JVM tests for the stores also run in CI (`gradlew -p apps/windows/sidecar test`).
+Pinned conversations sort first; archived ones leave the list unless "Show
+archived" is on; the row menu toggles both. The seven JVM tests for the stores
+also run in CI (`gradlew -p apps/windows/sidecar test`).
 
 ## Not verified yet
 
@@ -45,8 +49,6 @@ The six JVM tests for the stores also run in CI (`gradlew -p apps/windows/sideca
 
 - **Voice input** (microphone capture and bridge transcription) is not built; it
   needs an audio device and a real bridge round-trip.
-- **Pinned and archived conversations** are modelled in the store but have no
-  UI yet.
 - **Share out** through the Windows share sheet is not built; Copy covers the
   clipboard path.
 - Multi-monitor placement is saved as coordinates only; no per-monitor

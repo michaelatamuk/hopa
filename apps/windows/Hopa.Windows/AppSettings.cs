@@ -15,9 +15,9 @@ public sealed class AppSettings
 
     public string Tone { get; set; } = "warm";
 
-    public double WindowLeft { get; set; } = double.NaN;
+    public double? WindowLeft { get; set; }
 
-    public double WindowTop { get; set; } = double.NaN;
+    public double? WindowTop { get; set; }
 
     public double WindowWidth { get; set; } = 1140;
 

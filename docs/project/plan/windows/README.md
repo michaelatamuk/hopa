@@ -1,6 +1,6 @@
 # Windows client plan
 
-Status: **v1, W5 in progress (4 of 7); W3 live checks wait for an unlocked session.** Written 2026-11-14 from the
+Status: **v1, W4 1/7 and W5 4/7; W3 live checks wait for an unlocked session.** Written 2026-11-14 from the
 Android plan, the expansion portfolio and ADR-0021.
 
 Android is the active client; Windows is next; Harmony is frozen (ADR-0020).
@@ -126,7 +126,7 @@ Gate: the window acts on the PC (Notepad and Calculator) and refuses UAC, elevat
 - [ ] Clipboard and file drop into the composer; share out through the Windows share sheet or the clipboard.
 - [ ] Toast notification when an answer arrives while the window is unfocused; tray icon with run state and Stop.
 - [ ] Voice: bridge transcription into the composer and read-aloud through the bridge or Windows TTS.
-- [ ] History: search, rename, delete, export; pinned and archived conversations.
+- [x] History: search, rename, delete, export; pinned and archived conversations. (evidence: W4-desktop "Verified headlessly": pin/archive/hidden/shown, rename, search, export, delete; 7 store tests in CI)
 - [ ] Keyboard: shortcuts for new chat, send, stop, search; full keyboard navigation.
 - [ ] Accessibility: UIA names on every control, 200% scaling, high contrast.
 - [ ] Multi-monitor and window-state restore.

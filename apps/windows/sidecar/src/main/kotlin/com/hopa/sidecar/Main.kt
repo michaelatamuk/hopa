@@ -30,7 +30,22 @@ fun main() {
         when (message.type()) {
             "hello" -> io.send(Protocol.ready())
             "conversations.list" ->
-                io.send(Protocol.conversationList(message.text("id"), store.list()))
+                io.send(Protocol.conversationList(
+                    message.text("id"),
+                    store.list(message.text("includeArchived").toBoolean()),
+                ))
+
+            "conversation.pin" ->
+                io.send(Protocol.conversationOpened(
+                    message.text("id"),
+                    store.setPinned(message.text("conversationId"), message.text("pinned").toBoolean()),
+                ))
+
+            "conversation.archive" ->
+                io.send(Protocol.conversationOpened(
+                    message.text("id"),
+                    store.setArchived(message.text("conversationId"), message.text("archived").toBoolean()),
+                ))
 
             "conversation.create" ->
                 io.send(Protocol.conversationOpened(message.text("id"), store.create()))

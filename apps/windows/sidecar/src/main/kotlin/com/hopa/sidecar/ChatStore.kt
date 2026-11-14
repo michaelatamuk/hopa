@@ -18,8 +18,13 @@ class ChatStore(path: Path) {
     }
     private var conversations: MutableList<Conversation> = load()
 
-    fun list(): List<Conversation> =
-        conversations.filter { it.deletedAt == 0L }.sortedByDescending { it.updatedAt }
+    fun list(includeArchived: Boolean = false): List<Conversation> =
+        conversations
+            .filter { it.deletedAt == 0L && (includeArchived || it.archivedAt == 0L) }
+            .sortedWith(
+                compareByDescending<Conversation> { it.pinned }
+                    .thenByDescending { it.updatedAt },
+            )
 
     fun get(id: String): Conversation? = conversations.firstOrNull { it.id == id }
 
@@ -81,6 +86,31 @@ class ChatStore(path: Path) {
         )
         save()
         return true
+    }
+
+    fun setPinned(conversationId: String, pinned: Boolean): Conversation? {
+        val index = conversations.indexOfFirst { it.id == conversationId }
+        if (index < 0) {
+            return null
+        }
+        val updated = conversations[index].copy(pinned = pinned, updatedAt = System.currentTimeMillis())
+        conversations[index] = updated
+        save()
+        return updated
+    }
+
+    fun setArchived(conversationId: String, archived: Boolean): Conversation? {
+        val index = conversations.indexOfFirst { it.id == conversationId }
+        if (index < 0) {
+            return null
+        }
+        val updated = conversations[index].copy(
+            archivedAt = if (archived) System.currentTimeMillis() else 0L,
+            updatedAt = System.currentTimeMillis(),
+        )
+        conversations[index] = updated
+        save()
+        return updated
     }
 
     fun search(query: String): List<Conversation> {

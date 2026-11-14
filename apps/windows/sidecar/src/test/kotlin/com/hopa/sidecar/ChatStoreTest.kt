@@ -38,6 +38,27 @@ class ChatStoreTest {
     }
 
     @Test
+    fun pin_and_archive_change_the_list() {
+        val directory = Files.createTempDirectory("hopa-chat-four")
+        val path = directory.resolve("conversations.json")
+        val store = ChatStore(path)
+        val first = store.create()
+        val second = store.create()
+        store.append(first.id, "user", "one")
+        store.append(second.id, "user", "two")
+
+        store.setPinned(first.id, true)
+        assertEquals(first.id, ChatStore(path).list()[0].id)
+
+        store.setArchived(second.id, true)
+        assertEquals(1, store.list().size)
+        assertEquals(2, store.list(includeArchived = true).size)
+
+        store.setArchived(second.id, false)
+        assertEquals(2, store.list().size)
+    }
+
+    @Test
     fun rename_search_and_delete_work_on_disk() {
         val directory = Files.createTempDirectory("hopa-chat-three")
         val path = directory.resolve("conversations.json")

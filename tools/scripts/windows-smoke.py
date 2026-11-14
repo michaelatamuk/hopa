@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Smoke the Windows client: one turn, the list, settings, drafts, a screenshot.
 
 Local-only: it needs a Windows desktop with the sidecar built. The CI jobs do
@@ -61,6 +61,11 @@ def main() -> int:
         print("settings failed:\n" + settings)
         return 1
 
+    history = run_check("--history-check")
+    if "pin: True" not in history or "delete: True" not in history:
+        print("history failed:\n" + history)
+        return 1
+
     drafts = run_check("--draft-check")
     if "draft round-trip: ok" not in drafts:
         print("drafts failed:\n" + drafts)
@@ -69,6 +74,7 @@ def main() -> int:
     print("turn: ok")
     print("list: ok")
     print("settings: ok")
+    print("history: ok")
     print("drafts: ok")
     print(f"screenshot: {SHOT}")
     return 0
@@ -76,3 +82,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

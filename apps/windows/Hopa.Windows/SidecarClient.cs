@@ -134,9 +134,12 @@ public sealed class SidecarClient : IAsyncDisposable
             response["chainOk"]?.GetValue<bool>() == true);
     }
 
-    public async Task<List<JsonObject>> ListConversationsAsync()
+    public async Task<List<JsonObject>> ListConversationsAsync(bool includeArchived = false)
     {
-        var response = await RequestAsync("conversations.list", new JsonObject(), TimeSpan.FromSeconds(10));
+        var response = await RequestAsync(
+            "conversations.list",
+            new JsonObject { ["includeArchived"] = includeArchived },
+            TimeSpan.FromSeconds(10));
         var items = new List<JsonObject>();
         if (response["items"] is JsonArray array)
         {
@@ -167,8 +170,25 @@ public sealed class SidecarClient : IAsyncDisposable
         return response["conversation"] as JsonObject;
     }
 
-    public async Task<bool> DeleteConversationAsync(string id)
+    public async Task<JsonObject?> PinConversationAsync(string id, bool pinned)
     {
+        var response = await RequestAsync(
+            "conversation.pin",
+            new JsonObject { ["conversationId"] = id, ["pinned"] = pinned },
+            TimeSpan.FromSeconds(10));
+        return response["conversation"] as JsonObject;
+    }
+
+    public async Task<JsonObject?> ArchiveConversationAsync(string id, bool archived)
+    {
+        var response = await RequestAsync(
+            "conversation.archive",
+            new JsonObject { ["conversationId"] = id, ["archived"] = archived },
+            TimeSpan.FromSeconds(10));
+        return response["conversation"] as JsonObject;
+    }
+
+    public async Task<bool> DeleteConversationAsync(string id)    {
         var response = await RequestAsync(
             "conversation.delete",
             new JsonObject { ["conversationId"] = id },
