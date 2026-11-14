@@ -65,6 +65,23 @@ WAV back to `/transcribe`, and the text came out recognisable.
 Microphone capture itself is wired but **not verified**: the session is locked
 and no capture was exercised.
 
+## Stop
+
+While a turn runs the Send button becomes Stop, the tray offers Stop and sets its
+tip to "HOPA (working)", and Escape cancels. The sidecar sets a cancel flag that
+the loop checks between steps.
+
+```
+Hopa.Windows.exe --cancel-check out.txt
+answer: Stopped.
+cancelled: True
+steps: 0
+```
+
+A turn that was told to be slow was cancelled after one second; the loop returned
+"Stopped." with no steps. A model call already in flight finishes first, because
+the check sits between steps rather than inside the provider call.
+
 ## Not verified yet
 
 - The tray icon, the balloon, the shortcuts and the window restore need an

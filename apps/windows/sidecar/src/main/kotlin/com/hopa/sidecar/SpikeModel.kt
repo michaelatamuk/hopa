@@ -1,4 +1,4 @@
-package com.hopa.sidecar
+﻿package com.hopa.sidecar
 
 import com.hopa.core.model.ModelPort
 import com.hopa.core.model.ModelReply
@@ -18,6 +18,9 @@ class SpikeModel : ModelPort {
             ?.content
             .orEmpty()
         val lastAssistant = request.messages.lastOrNull { it.role == "assistant" }?.content.orEmpty()
+        if (goal.contains("slow", ignoreCase = true)) {
+            kotlinx.coroutines.delay(3_000)
+        }
         if (goal.contains("click", ignoreCase = true) && !lastAssistant.contains("\"ui.tap\"")) {
             return ModelReply("""{"schemaVersion":"1","kind":"ui.tap","x":700,"y":600,"timeoutMs":5000}""")
         }
@@ -36,3 +39,4 @@ class SpikeModel : ModelPort {
         return ModelReply("Sidecar answered: \"${goal.take(80)}\".")
     }
 }
+

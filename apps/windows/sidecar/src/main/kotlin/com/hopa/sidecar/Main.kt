@@ -86,6 +86,8 @@ fun main() {
                 conversationId = message.text("conversationId").ifBlank { null },
             )
 
+            "turn.cancel" -> engine.cancel()
+
             "device.result" -> device.resolve(message.text("id"), message)
             "approval.result" -> approval.resolve(message.text("id"), message.text("allow").toBoolean())
             "shutdown" -> return

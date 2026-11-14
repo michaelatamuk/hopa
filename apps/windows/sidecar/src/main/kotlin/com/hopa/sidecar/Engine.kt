@@ -31,8 +31,17 @@ class Engine(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val clock = SystemClock()
 
+    @Volatile
+    private var cancelled = false
+
+    fun cancel() {
+        cancelled = true
+        io.log("turn cancelled by the user")
+    }
+
     fun startTurn(id: String, goal: String, conversationId: String?) {
         scope.launch {
+            cancelled = false
             val conversation = conversationId?.let { store.get(it) } ?: store.create()
             val history = conversation.messages.map { ModelMessage(it.role, it.text) }
             store.append(conversation.id, "user", goal)
@@ -98,6 +107,7 @@ class Engine(
                     runId = "run-$id",
                     traceId = UUID.randomUUID().toString(),
                     context = TurnContext(goal = goal, history = history),
+                    isCancelled = { cancelled },
                 )
             }
 

@@ -85,6 +85,8 @@ public partial class MainWindow : Window
         };
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add("Open", null, (_, _) => ShowFromTray());
+        menu.Items.Add("Stop", null, (_, _) =>
+            Dispatcher.Invoke(() => client?.CancelTurn()));
         menu.Items.Add("Exit", null, (_, _) => Close());
         tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => ShowFromTray();
@@ -261,6 +263,38 @@ public partial class MainWindow : Window
         await ConnectAsync();
         await SendAsync("open settings on the phone");
         WriteLog();
+        Application.Current.Shutdown();
+    }
+
+    public async Task CancelCheckAsync(string path)
+    {
+        outputPath = path;
+        autoApproval = "allow";
+        await ConnectAsync();
+        var lines = new List<string>();
+        if (client == null)
+        {
+            lines.Add("cancel check: FAIL (not connected)");
+        }
+        else
+        {
+            try
+            {
+                var turn = client.StartTurnAsync("slow turn please", currentId);
+                await Task.Delay(1000);
+                client.CancelTurn();
+                var (answer, _, _, steps, _) = await turn;
+                lines.Add($"answer: {answer}");
+                lines.Add($"cancelled: {answer.Contains("Stopped", StringComparison.OrdinalIgnoreCase)}");
+                lines.Add($"steps: {steps?.Count ?? 0}");
+            }
+            catch (Exception error)
+            {
+                lines.Add($"error: {error.Message}");
+            }
+        }
+
+        File.WriteAllLines(path, lines);
         Application.Current.Shutdown();
     }
 
@@ -566,7 +600,13 @@ public partial class MainWindow : Window
         }
 
         running = true;
-        SendButton.IsEnabled = false;
+        SendButton.IsEnabled = true;
+        SendButton.Content = "Stop";
+        if (tray != null)
+        {
+            tray.Text = "HOPA (working)";
+        }
+
         StatusText.Text = "Working...";
         messages.Add(new MessageVm { Role = "user", Text = goal });
         EmptyState.Visibility = Visibility.Collapsed;
@@ -612,11 +652,25 @@ public partial class MainWindow : Window
         {
             running = false;
             SendButton.IsEnabled = true;
+            SendButton.Content = "Send";
+            if (tray != null)
+            {
+                tray.Text = "HOPA";
+            }
+
+            WriteLog();
         }
     }
 
     private async Task SendFromComposerAsync()
     {
+        if (running)
+        {
+            client?.CancelTurn();
+            StatusText.Text = "Stopping...";
+            return;
+        }
+
         var goal = Composer.Text.Trim();
         if (goal.Length == 0)
         {
@@ -937,7 +991,13 @@ public partial class MainWindow : Window
 
         if (e.Key == Key.Escape)
         {
+            if (running)
+            {
+                client?.CancelTurn();
+            }
+
             speech?.SpeakAsyncCancelAll();
+            voice.StopPlayback();
         }
 
         base.OnPreviewKeyDown(e);

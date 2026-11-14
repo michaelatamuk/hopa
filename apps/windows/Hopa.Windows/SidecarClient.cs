@@ -254,8 +254,12 @@ public sealed class SidecarClient : IAsyncDisposable
         return await RequestAsync("configure", fields, TimeSpan.FromSeconds(10));
     }
 
-    public void SendApprovalResult(string id, bool allow)
+    public void CancelTurn()
     {
+        Send(new JsonObject { ["type"] = "turn.cancel" });
+    }
+
+    public void SendApprovalResult(string id, bool allow)    {
         Send(new JsonObject
         {
             ["type"] = "approval.result",
