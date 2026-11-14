@@ -1,4 +1,4 @@
-﻿name: CI
+name: CI
 
 # Honest constraints of this workflow:
 #
@@ -266,3 +266,23 @@ jobs:
           name: hopa-android-debug
           path: apps/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+  windows:
+    name: Windows client (dotnet)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Sidecar tests
+        working-directory: apps/android
+        run: .\gradlew.bat -p ../windows/sidecar test --no-daemon
+      - name: Build the client
+        working-directory: apps/windows/Hopa.Windows
+        run: dotnet build -c Debug
