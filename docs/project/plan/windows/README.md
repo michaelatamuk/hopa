@@ -1,6 +1,6 @@
 # Windows client plan
 
-Status: **v1, W0 complete (7 of 7); W3 in progress: the adapter is built, live input verification is blocked by the locked session.** Written 2026-11-14 from the
+Status: **v1, W5 in progress (4 of 7); W3 live checks wait for an unlocked session.** Written 2026-11-14 from the
 Android plan, the expansion portfolio and ADR-0021.
 
 Android is the active client; Windows is next; Harmony is frozen (ADR-0020).
@@ -136,13 +136,13 @@ Gate: the parity table has no unexplained gaps.
 
 ### W5. Delivery (3 weeks)
 
-- [ ] Sidecar shipped as a `jlink` runtime plus a fat jar inside the MSI.
-- [ ] `dotnet publish` self-contained build; WiX MSI with version metadata and a licence page.
+- [x] Sidecar shipped as a `jlink` runtime plus a fat jar inside the MSI. (evidence: W5-package "Artifacts": MSI payload has runtime\bin\java.exe and sidecar\lib; administrative install verified)
+- [x] `dotnet publish` self-contained build; WiX MSI with version metadata and a licence page. (evidence: W5-package; `dotnet publish -r win-x64 --self-contained`; WiX 5.0.2 with WixUI_InstallDir and the LICENSE page)
 - [ ] Code signing (the same certificate that signs the `uiAccess` helper) and a verified signature on the installer.
 - [ ] Windows CI job: build, unit tests, smoke script; the sidecar keeps the JVM job.
 - [ ] Clean-VM E2E: install, pair the bridge, run one phone turn and one PC turn.
-- [ ] Release note, privacy note (what is read, what is stored, where), checksum.
-- [ ] Evidence: `docs/project/evidence/W5-release.md` with the installer hash and the E2E transcript.
+- [x] Release note, privacy note (what is read, what is stored, where), checksum. (evidence: docs/project/releases/0.1.0-windows.md; docs/reference/privacy.md "Windows client"; hashes in W5-package)
+- [x] Evidence: `docs/project/evidence/W5-release.md` with the installer hash and the E2E transcript. (evidence: docs/project/evidence/W5-package.md; hashes and the packaged-run transcript)
 
 Gate: the signed MSI installs on a clean Windows VM and both targets work.
 

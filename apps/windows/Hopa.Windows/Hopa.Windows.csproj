@@ -9,6 +9,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Hopa.Windows</AssemblyName>
     <RootNamespace>Hopa.Windows</RootNamespace>
+    <Version>0.1.0</Version>
+    <Product>HOPA</Product>
+    <Company>HOPA</Company>
+    <AssemblyTitle>HOPA for Windows</AssemblyTitle>
   </PropertyGroup>
 
   <ItemGroup>

@@ -27,21 +27,34 @@ public sealed class SidecarClient : IAsyncDisposable
 
     public SidecarClient()
     {
-        var lib = Environment.GetEnvironmentVariable("HOPA_SIDECAR_LIB")
-            ?? Path.GetFullPath(Path.Combine(
-                AppContext.BaseDirectory,
-                "..", "..", "..", "..",
-                "sidecar", "build", "install", "hopa-windows-sidecar", "lib"));
+        var lib = Environment.GetEnvironmentVariable("HOPA_SIDECAR_LIB");
+        if (string.IsNullOrEmpty(lib))
+        {
+            var installed = Path.Combine(AppContext.BaseDirectory, "sidecar", "lib");
+            lib = Directory.Exists(installed)
+                ? installed
+                : Path.GetFullPath(Path.Combine(
+                    AppContext.BaseDirectory,
+                    "..", "..", "..", "..",
+                    "sidecar", "build", "install", "hopa-windows-sidecar", "lib"));
+        }
+
         if (!Directory.Exists(lib))
         {
             throw new InvalidOperationException(
                 $"sidecar library not found at {lib}; run gradlew -p apps/windows/sidecar installDist");
         }
 
+        var nextToApp = Path.Combine(AppContext.BaseDirectory, "runtime", "bin", "java.exe");
+        var sibling = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "runtime", "bin", "java.exe"));
         var javaHome = Environment.GetEnvironmentVariable("JAVA_HOME");
-        var java = string.IsNullOrWhiteSpace(javaHome)
-            ? "java"
-            : Path.Combine(javaHome, "bin", "java.exe");
+        var java = File.Exists(nextToApp)
+            ? nextToApp
+            : File.Exists(sibling)
+                ? sibling
+                : string.IsNullOrWhiteSpace(javaHome)
+                    ? "java"
+                    : Path.Combine(javaHome, "bin", "java.exe");
         var start = new ProcessStartInfo(java)
         {
             Arguments = $"-cp \"{lib}\\*\" com.hopa.sidecar.MainKt",

@@ -28,6 +28,22 @@ Before text leaves the process, HOPA removes emails, phone numbers, card-like
 numbers, passwords and OTPs. The rules are conservative; false positives are
 preferred over leaks.
 
+## Windows client
+
+| Data | Where | Why | Retention |
+|---|---|---|---|
+| Conversations and turns | `%USERPROFILE%\.hopa\windows\conversations.json` | History and drafts | Until deleted |
+| Run records | `%USERPROFILE%\.hopa\windows\records.json` | Audit and the run view | Until deleted |
+| Pending approvals | `%USERPROFILE%\.hopa\windows\approvals.json` | Deny on the next start | Cleared on start |
+| Settings (no secrets) | `%LOCALAPPDATA%\HOPA\settings.json` | Provider, bridge address, window state | Until changed |
+| Model key, bridge token and refresh token | Windows Credential Manager (`hopa.model.key`, `hopa.bridge.token`, `hopa.bridge.refresh`) | Authenticate | Until cleared |
+| Screen observations | In memory only | Decide and verify | Not stored |
+| Screenshots | Not captured in 0.1.0 | - | - |
+
+The model key travels to the sidecar once, in memory, over the local stdio pipe;
+the sidecar never writes it to disk or logs it. A run record stores the action
+(which can include typed text) and hashes, not the screen tree.
+
 ## Export and delete
 
 - Records are plain JSONL and can be copied.

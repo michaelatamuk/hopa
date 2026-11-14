@@ -286,3 +286,11 @@ jobs:
       - name: Build the client
         working-directory: apps/windows/Hopa.Windows
         run: dotnet build -c Debug
+      - name: Package (zip)
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/scripts/windows-package.ps1 -SkipMsi
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: hopa-windows-package
+          path: out/windows/hopa-windows-0.1.0.zip
+          if-no-files-found: error
