@@ -83,6 +83,20 @@ object Protocol {
         put("model", model)
     }
 
+    fun conversationDeleted(id: String, ok: Boolean): JsonObject = buildJsonObject {
+        put("type", "conversation.deleted")
+        put("id", id)
+        put("ok", ok)
+    }
+
+    fun conversationExported(id: String, conversation: Conversation?): JsonObject = buildJsonObject {
+        put("type", "conversation.export")
+        put("id", id)
+        put("json", conversation?.let {
+            json.encodeToJsonElement(Conversation.serializer(), it).toString()
+        } ?: "")
+    }
+
     fun deviceRequest(id: String, op: String, fields: JsonObjectBuilder.() -> Unit): JsonObject =
         buildJsonObject {
             put("type", "device.request")

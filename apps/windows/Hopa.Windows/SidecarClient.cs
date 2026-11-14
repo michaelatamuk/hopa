@@ -145,6 +145,54 @@ public sealed class SidecarClient : IAsyncDisposable
         return response["conversation"] as JsonObject;
     }
 
+    public async Task<JsonObject?> RenameConversationAsync(string id, string title)
+    {
+        var response = await RequestAsync(
+            "conversation.rename",
+            new JsonObject { ["conversationId"] = id, ["title"] = title },
+            TimeSpan.FromSeconds(10));
+        return response["conversation"] as JsonObject;
+    }
+
+    public async Task<bool> DeleteConversationAsync(string id)
+    {
+        var response = await RequestAsync(
+            "conversation.delete",
+            new JsonObject { ["conversationId"] = id },
+            TimeSpan.FromSeconds(10));
+        return response["ok"]?.GetValue<bool>() == true;
+    }
+
+    public async Task<string> ExportConversationAsync(string id)
+    {
+        var response = await RequestAsync(
+            "conversation.export",
+            new JsonObject { ["conversationId"] = id },
+            TimeSpan.FromSeconds(10));
+        return response["json"]?.GetValue<string>() ?? "";
+    }
+
+    public async Task<List<JsonObject>> SearchConversationsAsync(string query)
+    {
+        var response = await RequestAsync(
+            "conversation.search",
+            new JsonObject { ["query"] = query },
+            TimeSpan.FromSeconds(10));
+        var items = new List<JsonObject>();
+        if (response["items"] is JsonArray array)
+        {
+            foreach (var item in array)
+            {
+                if (item is JsonObject obj)
+                {
+                    items.Add(obj);
+                }
+            }
+        }
+
+        return items;
+    }
+
     public async Task<JsonObject?> OpenConversationAsync(string id)
     {
         var response = await RequestAsync(

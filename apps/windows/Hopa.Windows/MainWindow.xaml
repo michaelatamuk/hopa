@@ -40,14 +40,29 @@
                                    Foreground="#1C1B18" />
                     </StackPanel>
                     <Button Content="+ New chat" Margin="0,12,0,0" Height="34"
-                            Background="#FFFFFF" BorderBrush="#E9E4DA" Click="NewChat_Click" />
+                            Background="#FFFFFF" BorderBrush="#E9E4DA" Click="NewChat_Click"
+                            AutomationProperties.Name="New chat" />
+                    <TextBox x:Name="SearchBox" Margin="0,10,0,0" Height="30"
+                             VerticalContentAlignment="Center"
+                             AutomationProperties.Name="Search conversations"
+                             TextChanged="SearchBox_TextChanged" />
                 </StackPanel>
                 <Button DockPanel.Dock="Bottom" x:Name="SettingsButton" Content="Settings"
                         Margin="12,8,12,12" Height="32" Background="Transparent"
-                        BorderThickness="0" Foreground="#6B665C" Click="Settings_Click" />
+                        BorderThickness="0" Foreground="#6B665C" Click="Settings_Click"
+                        AutomationProperties.Name="Settings" />
                 <ListBox x:Name="ConversationList" BorderThickness="0" Background="Transparent"
                          ItemTemplate="{StaticResource ConversationTemplate}"
-                         SelectionChanged="ConversationList_SelectionChanged" />
+                         SelectionChanged="ConversationList_SelectionChanged"
+                         AutomationProperties.Name="Conversations">
+                    <ListBox.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="Rename" Click="Rename_Click" />
+                            <MenuItem Header="Export..." Click="Export_Click" />
+                            <MenuItem Header="Delete" Click="Delete_Click" />
+                        </ContextMenu>
+                    </ListBox.ContextMenu>
+                </ListBox>
             </DockPanel>
         </Border>
 
@@ -67,15 +82,27 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock x:Name="TitleText" Text="New chat" VerticalAlignment="Center"
-                               FontSize="15" FontWeight="SemiBold" Foreground="#1C1B18" />
+                               FontSize="15" FontWeight="SemiBold" Foreground="#1C1B18"
+                               AutomationProperties.Name="Conversation title" />
                     <TextBlock x:Name="StatusText" Grid.Column="1" Text="" VerticalAlignment="Center"
                                Margin="12,0" FontSize="11" Foreground="#9A9488" />
-                    <Button x:Name="DetailsButton" Grid.Column="2" Content="Run" Width="44" Height="26"
+                    <Button x:Name="CopyButton" Grid.Column="2" Content="Copy" Width="46" Height="26"
+                            Margin="0,0,6,0" Background="Transparent" BorderThickness="0"
+                            Foreground="#6B665C" IsEnabled="False" Click="Copy_Click"
+                            AutomationProperties.Name="Copy the last answer" />
+                    <Button x:Name="SpeakButton" Grid.Column="3" Content="Speak" Width="50" Height="26"
+                            Margin="0,0,6,0" Background="Transparent" BorderThickness="0"
+                            Foreground="#6B665C" IsEnabled="False" Click="Speak_Click"
+                            AutomationProperties.Name="Read the last answer aloud" />
+                    <Button x:Name="DetailsButton" Grid.Column="4" Content="Run" Width="44" Height="26"
                             Margin="0,0,8,0" Background="Transparent" BorderThickness="0"
-                            Foreground="#6B665C" IsEnabled="False" Click="Details_Click" />
-                    <StackPanel x:Name="WindowButtons" Grid.Column="3" Orientation="Horizontal"
+                            Foreground="#6B665C" IsEnabled="False" Click="Details_Click"
+                            AutomationProperties.Name="Run details" />
+                    <StackPanel x:Name="WindowButtons" Grid.Column="5" Orientation="Horizontal"
                                 VerticalAlignment="Center">
                         <Button x:Name="MinimizeButton" Content="&#x2013;" Width="34" Height="28"
                                 Background="Transparent" BorderThickness="0" Foreground="#6B665C"
@@ -110,10 +137,11 @@
                     </Grid.ColumnDefinitions>
                     <TextBox x:Name="Composer" BorderThickness="0" Background="Transparent"
                              FontSize="14" TextWrapping="Wrap" MinHeight="38"
-                             VerticalContentAlignment="Center" KeyDown="Composer_KeyDown" />
+                             VerticalContentAlignment="Center" KeyDown="Composer_KeyDown"
+                             AutomationProperties.Name="Message" />
                     <Button x:Name="SendButton" Grid.Column="1" Content="Send" Width="84" Height="38"
                             Background="#0A59F7" Foreground="#FFFFFF" BorderThickness="0"
-                            Click="Send_Click" />
+                            Click="Send_Click" AutomationProperties.Name="Send message" />
                 </Grid>
             </Border>
         </Grid>

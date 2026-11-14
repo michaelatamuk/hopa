@@ -36,4 +36,23 @@ class ChatStoreTest {
         assertEquals("one", store.get(first.id)?.title)
         assertEquals("two", store.get(second.id)?.title)
     }
+
+    @Test
+    fun rename_search_and_delete_work_on_disk() {
+        val directory = Files.createTempDirectory("hopa-chat-three")
+        val path = directory.resolve("conversations.json")
+        val store = ChatStore(path)
+        val conversation = store.create()
+        store.append(conversation.id, "user", "pay the electricity bill")
+
+        store.rename(conversation.id, "Bills")
+        assertEquals("Bills", ChatStore(path).get(conversation.id)?.title)
+
+        assertEquals(1, store.search("electricity").size)
+        assertEquals(1, store.search("bills").size)
+        assertEquals(0, store.search("nothing here").size)
+
+        assertEquals(true, store.delete(conversation.id))
+        assertEquals(0, ChatStore(path).list().size)
+    }
 }

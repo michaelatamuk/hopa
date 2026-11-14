@@ -31,8 +31,7 @@ class ChatStore(path: Path) {
         return conversation
     }
 
-    fun append(conversationId: String, role: String, text: String): Conversation? {
-        val index = conversations.indexOfFirst { it.id == conversationId }
+    fun append(conversationId: String, role: String, text: String): Conversation? {        val index = conversations.indexOfFirst { it.id == conversationId }
         if (index < 0) {
             return null
         }
@@ -58,6 +57,41 @@ class ChatStore(path: Path) {
         conversations[index] = updated
         save()
         return updated
+    }
+
+    fun rename(conversationId: String, title: String): Conversation? {
+        val index = conversations.indexOfFirst { it.id == conversationId }
+        if (index < 0) {
+            return null
+        }
+        val updated = conversations[index].copy(title = title.trim().take(80), updatedAt = System.currentTimeMillis())
+        conversations[index] = updated
+        save()
+        return updated
+    }
+
+    fun delete(conversationId: String): Boolean {
+        val index = conversations.indexOfFirst { it.id == conversationId }
+        if (index < 0) {
+            return false
+        }
+        conversations[index] = conversations[index].copy(
+            deletedAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis(),
+        )
+        save()
+        return true
+    }
+
+    fun search(query: String): List<Conversation> {
+        val needle = query.trim()
+        if (needle.isEmpty()) {
+            return list()
+        }
+        return list().filter { conversation ->
+            conversation.title.contains(needle, ignoreCase = true) ||
+                conversation.messages.any { it.text.contains(needle, ignoreCase = true) }
+        }
     }
 
     private fun load(): MutableList<Conversation> {

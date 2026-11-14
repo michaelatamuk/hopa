@@ -38,6 +38,27 @@ fun main() {
             "conversation.open" ->
                 io.send(Protocol.conversationOpened(message.text("id"), store.get(message.text("conversationId"))))
 
+            "conversation.search" ->
+                io.send(Protocol.conversationList(message.text("id"), store.search(message.text("query"))))
+
+            "conversation.rename" ->
+                io.send(Protocol.conversationOpened(
+                    message.text("id"),
+                    store.rename(message.text("conversationId"), message.text("title")),
+                ))
+
+            "conversation.delete" ->
+                io.send(Protocol.conversationDeleted(
+                    message.text("id"),
+                    store.delete(message.text("conversationId")),
+                ))
+
+            "conversation.export" ->
+                io.send(Protocol.conversationExported(
+                    message.text("id"),
+                    store.get(message.text("conversationId")),
+                ))
+
             "configure" -> {
                 config.update(message)
                 io.log("configured: ${config.summary()}")

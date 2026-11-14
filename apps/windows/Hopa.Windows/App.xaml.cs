@@ -66,6 +66,12 @@ public partial class App : Application
             return;
         }
 
+        if (args.Length >= 2 && args[0] == "--history-check")
+        {
+            _ = window.HistoryCheckAsync(args[1]);
+            return;
+        }
+
         if (args.Length >= 2 && args[0] == "--pc-check")
         {
             _ = window.PcCheckAsync(args[1]);

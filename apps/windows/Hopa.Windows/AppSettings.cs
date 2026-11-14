@@ -14,4 +14,14 @@ public sealed class AppSettings
     public string ModelName { get; set; } = "gpt-4o-mini";
 
     public string Tone { get; set; } = "warm";
+
+    public double WindowLeft { get; set; } = double.NaN;
+
+    public double WindowTop { get; set; } = double.NaN;
+
+    public double WindowWidth { get; set; } = 1140;
+
+    public double WindowHeight { get; set; } = 760;
+
+    public bool WindowMaximized { get; set; }
 }

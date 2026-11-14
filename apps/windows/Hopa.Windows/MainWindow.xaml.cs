@@ -1,14 +1,17 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Net.Http;
+using System.Speech.Synthesis;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using Microsoft.Win32;
 using System.Windows.Shell;
 
 namespace Hopa.Windows;
@@ -16,10 +19,14 @@ namespace Hopa.Windows;
 public partial class MainWindow : Window
 {
     private readonly ObservableCollection<ConversationVm> conversations = new();
+    private readonly List<ConversationVm> allConversations = new();
     private readonly ObservableCollection<MessageVm> messages = new();
     private readonly Dictionary<string, string> drafts = new();
     private readonly List<string> log = new();
     private readonly WindowsDevice device = new();
+    private SpeechSynthesizer? speech;
+    private System.Windows.Forms.NotifyIcon? tray;
+    private string lastAnswer = "";
     private SidecarClient? client;
     private Task? connecting;
     private string? currentId;
@@ -54,7 +61,78 @@ public partial class MainWindow : Window
             : "\u25A1";
         ConversationList.ItemsSource = conversations;
         MessagesList.ItemsSource = messages;
+        SetupTray();
+        Loaded += (_, _) => RestoreWindowState();
+        Closing += (_, _) => SaveWindowState();
+        Closed += (_, _) =>
+        {
+            tray?.Dispose();
+            speech?.Dispose();
+            device.Dispose();
+        };
         Loaded += async (_, _) => await ConnectAsync();
+    }
+
+    private void SetupTray()
+    {
+        tray = new System.Windows.Forms.NotifyIcon
+        {
+            Icon = System.Drawing.SystemIcons.Information,
+            Text = "HOPA",
+            Visible = true,
+        };
+        var menu = new System.Windows.Forms.ContextMenuStrip();
+        menu.Items.Add("Open", null, (_, _) => ShowFromTray());
+        menu.Items.Add("Exit", null, (_, _) => Close());
+        tray.ContextMenuStrip = menu;
+        tray.DoubleClick += (_, _) => ShowFromTray();
+    }
+
+    private void ShowFromTray()
+    {
+        Show();
+        if (WindowState == WindowState.Minimized)
+        {
+            WindowState = WindowState.Normal;
+        }
+
+        Activate();
+    }
+
+    private void RestoreWindowState()
+    {
+        var settings = new SettingsStore().Load();
+        if (settings.WindowWidth >= 800 && settings.WindowHeight >= 500)
+        {
+            Width = settings.WindowWidth;
+            Height = settings.WindowHeight;
+        }
+
+        if (!double.IsNaN(settings.WindowLeft) && !double.IsNaN(settings.WindowTop))
+        {
+            Left = settings.WindowLeft;
+            Top = settings.WindowTop;
+        }
+
+        if (settings.WindowMaximized)
+        {
+            WindowState = WindowState.Maximized;
+        }
+    }
+
+    private void SaveWindowState()
+    {
+        var settings = new SettingsStore();
+        var current = settings.Load();
+        var bounds = WindowState == WindowState.Normal
+            ? new Rect(Left, Top, Width, Height)
+            : RestoreBounds;
+        current.WindowLeft = bounds.Left;
+        current.WindowTop = bounds.Top;
+        current.WindowWidth = bounds.Width;
+        current.WindowHeight = bounds.Height;
+        current.WindowMaximized = WindowState == WindowState.Maximized;
+        settings.Save(current);
     }
 
     private void Minimize_Click(object sender, RoutedEventArgs e)
@@ -181,6 +259,51 @@ public partial class MainWindow : Window
         await ConnectAsync();
         await SendAsync("open settings on the phone");
         WriteLog();
+        Application.Current.Shutdown();
+    }
+
+    public async Task HistoryCheckAsync(string path)
+    {
+        outputPath = path;
+        await ConnectAsync();
+        var lines = new List<string>();
+        if (client == null)
+        {
+            lines.Add("history check: FAIL (not connected)");
+            File.WriteAllLines(path, lines);
+            Application.Current.Shutdown();
+            return;
+        }
+
+        var created = await client.CreateConversationAsync();
+        var id = created?["id"]?.GetValue<string>() ?? "";
+        string renamed = "FAIL";
+        var hits = new List<JsonObject>();
+        var exported = "";
+        var deleted = false;
+        var remaining = -1;
+        try
+        {
+            renamed = await client.RenameConversationAsync(id, "Groceries") is { } r
+                ? r["title"]?.GetValue<string>() ?? "FAIL"
+                : "FAIL";
+            hits = await client.SearchConversationsAsync("Grocer");
+            exported = await client.ExportConversationAsync(id);
+            deleted = await client.DeleteConversationAsync(id);
+            remaining = (await client.ListConversationsAsync()).Count;
+        }
+        catch (Exception error)
+        {
+            lines.Add($"error: {error.Message}");
+        }
+
+        lines.Add($"created: {(id.Length > 0 ? "ok" : "FAIL")}");
+        lines.Add($"renamed: {renamed}");
+        lines.Add($"search hits: {hits.Count}");
+        lines.Add($"export has title: {exported.Contains("\"Groceries\"")}");
+        lines.Add($"delete: {deleted}");
+        lines.Add($"conversations left: {remaining}");
+        File.WriteAllLines(path, lines);
         Application.Current.Shutdown();
     }
 
@@ -327,24 +450,25 @@ public partial class MainWindow : Window
         }
 
         var items = await client.ListConversationsAsync();
-        conversations.Clear();
+        allConversations.Clear();
         foreach (var item in items)
         {
-            conversations.Add(ToVm(item));
+            allConversations.Add(ToVm(item));
         }
 
-        if (conversations.Count == 0)
+        if (allConversations.Count == 0)
         {
             var created = await client.CreateConversationAsync();
             if (created != null)
             {
-                conversations.Add(ToVm(created));
+                allConversations.Add(ToVm(created));
             }
         }
 
-        if (conversations.Count > 0)
+        ApplyFilter();
+        if (allConversations.Count > 0)
         {
-            await SelectAsync(conversations[0].Id);
+            await SelectAsync(allConversations[0].Id);
         }
     }
 
@@ -382,7 +506,8 @@ public partial class MainWindow : Window
         TitleText.Text = open?["title"]?.GetValue<string>() ?? "New chat";
         EmptyState.Visibility = messages.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         switching = true;
-        ConversationList.SelectedItem = conversations.FirstOrDefault(item => item.Id == id);
+        ConversationList.SelectedItem = conversations.FirstOrDefault(item => item.Id == id)
+            ?? allConversations.FirstOrDefault(item => item.Id == id);
         switching = false;
         ScrollToEnd();
         StatusText.Text = "";
@@ -407,6 +532,14 @@ public partial class MainWindow : Window
             currentId = conversationId;
             messages.Add(new MessageVm { Role = "assistant", Text = answer });
             Log($"HOPA: {answer}");
+            lastAnswer = answer;
+            CopyButton.IsEnabled = answer.Length > 0;
+            SpeakButton.IsEnabled = answer.Length > 0;
+            if (!IsActive)
+            {
+                var preview = answer.Length > 140 ? answer[..140] + "..." : answer;
+                tray?.ShowBalloonTip(4000, "HOPA", preview, System.Windows.Forms.ToolTipIcon.Info);
+            }
             lastSteps = steps;
             lastChainOk = chainOk;
             DetailsButton.IsEnabled = steps is { Count: > 0 };
@@ -456,7 +589,7 @@ public partial class MainWindow : Window
 
     private void UpsertConversation(string id, string title)
     {
-        var existing = conversations.FirstOrDefault(item => item.Id == id);
+        var existing = allConversations.FirstOrDefault(item => item.Id == id);
         if (existing != null)
         {
             existing.Title = title;
@@ -464,7 +597,152 @@ public partial class MainWindow : Window
             return;
         }
 
-        conversations.Insert(0, new ConversationVm { Id = id, Title = title, UpdatedLabel = "now" });
+        var created = new ConversationVm { Id = id, Title = title, UpdatedLabel = "now" };
+        allConversations.Insert(0, created);
+        if (SearchBox.Text.Trim().Length == 0)
+        {
+            conversations.Insert(0, created);
+        }
+    }
+
+    private void SearchBox_TextChanged(object sender, TextChangedEventArgs e) => ApplyFilter();
+
+    private void ApplyFilter()
+    {
+        var query = SearchBox.Text.Trim();
+        conversations.Clear();
+        foreach (var conversation in allConversations)
+        {
+            if (query.Length == 0 ||
+                conversation.SearchText.Contains(query, StringComparison.OrdinalIgnoreCase))
+            {
+                conversations.Add(conversation);
+            }
+        }
+    }
+
+    private async void Rename_Click(object sender, RoutedEventArgs e)
+    {
+        if (client == null || ConversationList.SelectedItem is not ConversationVm vm)
+        {
+            return;
+        }
+
+        var dialog = new RenameWindow(vm.Title) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.TitleValue.Length == 0)
+        {
+            return;
+        }
+
+        var renamed = await client.RenameConversationAsync(vm.Id, dialog.TitleValue);
+        if (renamed?["title"]?.GetValue<string>() is { } title)
+        {
+            vm.Title = title;
+            TitleText.Text = title;
+        }
+    }
+
+    private async void Delete_Click(object sender, RoutedEventArgs e)
+    {
+        if (client == null || ConversationList.SelectedItem is not ConversationVm vm)
+        {
+            return;
+        }
+
+        if (MessageBox.Show($"Delete \"{vm.Title}\"?", "HOPA", MessageBoxButton.OKCancel,
+                MessageBoxImage.Question) != MessageBoxResult.OK)
+        {
+            return;
+        }
+
+        if (!await client.DeleteConversationAsync(vm.Id))
+        {
+            return;
+        }
+
+        allConversations.Remove(vm);
+        ApplyFilter();
+        if (currentId == vm.Id)
+        {
+            currentId = null;
+            messages.Clear();
+            if (allConversations.Count > 0)
+            {
+                await SelectAsync(allConversations[0].Id);
+            }
+            else
+            {
+                await RefreshAsync();
+            }
+        }
+    }
+
+    private async void Export_Click(object sender, RoutedEventArgs e)
+    {
+        if (client == null || ConversationList.SelectedItem is not ConversationVm vm)
+        {
+            return;
+        }
+
+        var json = await client.ExportConversationAsync(vm.Id);
+        var dialog = new SaveFileDialog
+        {
+            FileName = $"{vm.Title}.json",
+            Filter = "JSON|*.json",
+        };
+        if (dialog.ShowDialog() == true)
+        {
+            File.WriteAllText(dialog.FileName, json);
+        }
+    }
+
+    private void Copy_Click(object sender, RoutedEventArgs e)
+    {
+        if (lastAnswer.Length > 0)
+        {
+            Clipboard.SetText(lastAnswer);
+            StatusText.Text = "Copied";
+        }
+    }
+
+    private void Speak_Click(object sender, RoutedEventArgs e)
+    {
+        if (lastAnswer.Length == 0)
+        {
+            return;
+        }
+
+        speech ??= new SpeechSynthesizer();
+        speech.SpeakAsyncCancelAll();
+        speech.SpeakAsync(lastAnswer);
+        StatusText.Text = "Reading aloud";
+    }
+
+    protected override void OnPreviewKeyDown(KeyEventArgs e)
+    {
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        {
+            switch (e.Key)
+            {
+                case Key.N:
+                    NewChat_Click(this, new RoutedEventArgs());
+                    e.Handled = true;
+                    break;
+                case Key.F:
+                case Key.K:
+                    SearchBox.Focus();
+                    SearchBox.SelectAll();
+                    e.Handled = true;
+                    break;
+            }
+        }
+
+        if (e.Key == Key.Escape)
+        {
+            speech?.SpeakAsyncCancelAll();
+        }
+
+        base.OnPreviewKeyDown(e);
     }
 
     private async void Settings_Click(object sender, RoutedEventArgs e)
@@ -512,7 +790,9 @@ public partial class MainWindow : Window
         }
 
         var vm = ToVm(created);
-        conversations.Insert(0, vm);
+        allConversations.Insert(0, vm);
+        SearchBox.Clear();
+        ApplyFilter();
         currentId = null;
         await SelectAsync(vm.Id);
     }
@@ -679,12 +959,26 @@ public partial class MainWindow : Window
     private static ConversationVm ToVm(JsonObject item)
     {
         var updatedAt = item["updatedAt"]?.GetValue<long>() ?? 0;
+        var title = item["title"]?.GetValue<string>() ?? "New chat";
+        var searchParts = new List<string> { title };
+        if (item["messages"] is JsonArray messages)
+        {
+            foreach (var node in messages)
+            {
+                if (node?["text"]?.GetValue<string>() is { Length: > 0 } text)
+                {
+                    searchParts.Add(text);
+                }
+            }
+        }
+
         return new ConversationVm
         {
             Id = item["id"]?.GetValue<string>() ?? "",
-            Title = item["title"]?.GetValue<string>() ?? "New chat",
+            Title = title,
             UpdatedLabel = FormatTime(updatedAt),
             MessageCount = (item["messages"] as JsonArray)?.Count ?? 0,
+            SearchText = string.Join("\n", searchParts),
         };
     }
 
