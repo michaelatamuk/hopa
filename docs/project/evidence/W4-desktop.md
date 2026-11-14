@@ -65,6 +65,22 @@ WAV back to `/transcribe`, and the text came out recognisable.
 Microphone capture itself is wired but **not verified**: the session is locked
 and no capture was exercised.
 
+## Files and the clipboard
+
+- Dropping a file on the window copies it into `%USERPROFILE%\.hopa\windows\attachments`
+  with the phone's 4 MiB cap, and shows a pending row above the composer
+  (name, size, type, Remove). Sending without a caption uses
+  `Shared an image: <name>` or `Shared a file: <name>`.
+- The sidecar stores the attachment on the user turn, so it survives a restart.
+- Copy puts the last answer on the clipboard; that is the share-out path.
+
+```
+Hopa.Windows.exe --attach-check <png> out.txt
+attached: hopa-attach.png (28910 bytes)
+in conversation: True
+copy exists: True
+```
+
 ## Stop
 
 While a turn runs the Send button becomes Stop, the tray offers Stop and sets its

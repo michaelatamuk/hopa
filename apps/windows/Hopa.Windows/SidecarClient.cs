@@ -119,12 +119,18 @@ public sealed class SidecarClient : IAsyncDisposable
 
     public async Task<(string Answer, string ConversationId, string Title, JsonArray? Steps, bool ChainOk)> StartTurnAsync(
         string goal,
-        string? conversationId)
+        string? conversationId,
+        JsonObject? attachment = null)
     {
         var fields = new JsonObject { ["goal"] = goal };
         if (conversationId != null)
         {
             fields["conversationId"] = conversationId;
+        }
+
+        if (attachment != null)
+        {
+            fields["attachment"] = attachment.DeepClone();
         }
 
         var response = await RequestAsync("turn.start", fields, TimeSpan.FromSeconds(120));
@@ -254,8 +260,22 @@ public sealed class SidecarClient : IAsyncDisposable
         return await RequestAsync("configure", fields, TimeSpan.FromSeconds(10));
     }
 
-    public void CancelTurn()
+    public async Task<JsonObject> AttachFileAsync(string path)
     {
+        var response = await RequestAsync(
+            "file.attach",
+            new JsonObject { ["path"] = path },
+            TimeSpan.FromSeconds(20));
+        if (response["error"]?.GetValue<string>() is { Length: > 0 } error)
+        {
+            throw new InvalidOperationException(error);
+        }
+
+        return response["attachment"] as JsonObject
+            ?? throw new InvalidOperationException("the sidecar attached nothing");
+    }
+
+    public void CancelTurn()    {
         Send(new JsonObject { ["type"] = "turn.cancel" });
     }
 

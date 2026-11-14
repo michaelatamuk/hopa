@@ -66,6 +66,12 @@ public partial class App : Application
             return;
         }
 
+        if (args.Length >= 3 && args[0] == "--attach-check")
+        {
+            _ = window.AttachCheckAsync(args[1], args[2]);
+            return;
+        }
+
         if (args.Length >= 2 && args[0] == "--cancel-check")
         {
             _ = window.CancelCheckAsync(args[1]);

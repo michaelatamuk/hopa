@@ -1,5 +1,6 @@
 package com.hopa.sidecar
 
+import com.hopa.data.sessions.Attachment
 import com.hopa.data.sessions.ChatMessage
 import com.hopa.data.sessions.Conversation
 import java.nio.file.Files
@@ -36,7 +37,13 @@ class ChatStore(path: Path) {
         return conversation
     }
 
-    fun append(conversationId: String, role: String, text: String): Conversation? {        val index = conversations.indexOfFirst { it.id == conversationId }
+    fun append(
+        conversationId: String,
+        role: String,
+        text: String,
+        attachment: Attachment? = null,
+    ): Conversation? {
+        val index = conversations.indexOfFirst { it.id == conversationId }
         if (index < 0) {
             return null
         }
@@ -48,6 +55,7 @@ class ChatStore(path: Path) {
             role = role,
             text = text,
             timestamp = now,
+            attachment = attachment,
         )
         val title = if (conversation.title == "New chat" && role == "user" && text.isNotBlank()) {
             text.take(40)

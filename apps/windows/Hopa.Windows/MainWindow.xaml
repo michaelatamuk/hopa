@@ -6,6 +6,8 @@
         Background="#F7F4EE"
         WindowStyle="None"
         ResizeMode="CanResize"
+        AllowDrop="True"
+        Drop="Window_Drop"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <DataTemplate x:Key="MessageTemplate">
@@ -86,6 +88,7 @@
                 <RowDefinition Height="52" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <Border Grid.Row="0" Background="#F7F4EE" BorderBrush="#E9E4DA" BorderThickness="0,0,0,1">
@@ -141,7 +144,26 @@
                 </StackPanel>
             </Grid>
 
-            <Border Grid.Row="2" Margin="16,8,16,16" Background="#FFFFFF" CornerRadius="18"
+            <Border x:Name="PendingAttachmentBar" Grid.Row="2" Margin="16,8,16,0"
+                    Background="#F3EFE7" CornerRadius="12" Padding="10,8" Visibility="Collapsed">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock x:Name="PendingAttachmentName" FontSize="12"
+                                   Foreground="#1C1B18" TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="PendingAttachmentDetail" FontSize="10" Foreground="#9A9488" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Remove" Width="66" Height="26"
+                            Background="Transparent" BorderThickness="0" Foreground="#6B665C"
+                            Click="RemoveAttachment_Click"
+                            AutomationProperties.Name="Remove attachment" />
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="3" Margin="16,8,16,16" Background="#FFFFFF" CornerRadius="18"
                     BorderBrush="#E9E4DA" BorderThickness="1" Padding="8">
                 <Grid>
                     <Grid.ColumnDefinitions>

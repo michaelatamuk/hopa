@@ -10,6 +10,7 @@ import com.hopa.core.loop.TurnContext
 import com.hopa.core.model.ModelMessage
 import com.hopa.core.model.ModelPort
 import com.hopa.core.ports.DevicePort
+import com.hopa.data.sessions.Attachment
 import com.hopa.core.records.InMemoryRunRecorder
 import com.hopa.core.records.RunChain
 import com.hopa.core.records.RunRecordFactory
@@ -39,12 +40,17 @@ class Engine(
         io.log("turn cancelled by the user")
     }
 
-    fun startTurn(id: String, goal: String, conversationId: String?) {
+    fun startTurn(
+        id: String,
+        goal: String,
+        conversationId: String?,
+        attachment: Attachment? = null,
+    ) {
         scope.launch {
             cancelled = false
             val conversation = conversationId?.let { store.get(it) } ?: store.create()
             val history = conversation.messages.map { ModelMessage(it.role, it.text) }
-            store.append(conversation.id, "user", goal)
+            store.append(conversation.id, "user", goal, attachment)
             io.log("turn $id in ${conversation.id}: $goal")
 
             val device: DevicePort = if (config.hasBridge) {

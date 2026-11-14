@@ -2,6 +2,7 @@ package com.hopa.sidecar
 
 import com.hopa.core.gate.ApprovalRequest
 import com.hopa.core.contracts.RunRecord
+import com.hopa.data.sessions.Attachment
 import com.hopa.data.sessions.Conversation
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -92,6 +93,24 @@ object Protocol {
 
     fun conversationDeleted(id: String, ok: Boolean): JsonObject = buildJsonObject {
         put("type", "conversation.deleted")
+        put("id", id)
+        put("ok", ok)
+    }
+
+    fun fileAttached(id: String, attachment: Attachment?, error: String? = null): JsonObject =
+        buildJsonObject {
+            put("type", "file.attached")
+            put("id", id)
+            if (attachment != null) {
+                put("attachment", json.encodeToJsonElement(Attachment.serializer(), attachment))
+            }
+            if (error != null) {
+                put("error", error)
+            }
+        }
+
+    fun fileRemoved(id: String, ok: Boolean): JsonObject = buildJsonObject {
+        put("type", "file.removed")
         put("id", id)
         put("ok", ok)
     }

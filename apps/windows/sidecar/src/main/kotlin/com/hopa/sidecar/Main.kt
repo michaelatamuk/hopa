@@ -3,7 +3,10 @@ package com.hopa.sidecar
 import com.hopa.sidecar.Protocol.asObject
 import com.hopa.sidecar.Protocol.text
 import com.hopa.sidecar.Protocol.type
+import com.hopa.data.sessions.Attachment
+import com.hopa.core.json.HopaJson
 import java.nio.file.Path
+import kotlinx.serialization.json.JsonObject
 
 fun main() {
     val io = Stdio()
@@ -16,6 +19,7 @@ fun main() {
     val records = RecordStore(dataDir.resolve("records.json"))
     val config = RuntimeConfig()
     val approval = HostApproval(io, approvals)
+    val attachments = Attachments(dataDir.resolve("attachments"))
     val engine = Engine(io, device, approval, store, records, config)
     io.send(Protocol.ready())
     val denied = approvals.restoreAndDeny()
@@ -80,11 +84,34 @@ fun main() {
                 io.send(Protocol.configured(message.text("id"), config.useBridge, config.modelProvider))
             }
 
-            "turn.start" -> engine.startTurn(
-                id = message.text("id"),
-                goal = message.text("goal"),
-                conversationId = message.text("conversationId").ifBlank { null },
-            )
+            "turn.start" -> {
+                val attachment = (message["attachment"] as? JsonObject)?.let {
+                    HopaJson.element.decodeFromJsonElement(Attachment.serializer(), it)
+                }
+                engine.startTurn(
+                    id = message.text("id"),
+                    goal = message.text("goal"),
+                    conversationId = message.text("conversationId").ifBlank { null },
+                    attachment = attachment,
+                )
+            }
+
+            "file.attach" -> {
+                val path = message.text("path")
+                val result = runCatching { attachments.accept(Path.of(path)) }
+                io.send(
+                    Protocol.fileAttached(
+                        id = message.text("id"),
+                        attachment = result.getOrNull(),
+                        error = result.exceptionOrNull()?.message,
+                    ),
+                )
+            }
+
+            "file.remove" -> {
+                attachments.remove(message.text("path"))
+                io.send(Protocol.fileRemoved(message.text("id"), true))
+            }
 
             "turn.cancel" -> engine.cancel()
 

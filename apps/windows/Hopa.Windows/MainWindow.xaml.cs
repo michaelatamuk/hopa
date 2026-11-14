@@ -33,6 +33,7 @@ public partial class MainWindow : Window
     private string? currentId;
     private JsonArray? lastSteps;
     private bool lastChainOk;
+    private JsonObject? pendingAttachment;
     private string? autoApproval;
     private string? outputPath;
     private bool switching;
@@ -263,6 +264,41 @@ public partial class MainWindow : Window
         await ConnectAsync();
         await SendAsync("open settings on the phone");
         WriteLog();
+        Application.Current.Shutdown();
+    }
+
+    public async Task AttachCheckAsync(string file, string path)
+    {
+        outputPath = path;
+        await ConnectAsync();
+        var lines = new List<string>();
+        if (client == null)
+        {
+            lines.Add("attach check: FAIL (not connected)");
+        }
+        else
+        {
+            try
+            {
+                var attachment = await client.AttachFileAsync(file);
+                var name = attachment["name"]?.GetValue<string>() ?? "";
+                var bytes = attachment["bytes"]?.GetValue<long>() ?? 0;
+                var local = attachment["path"]?.GetValue<string>() ?? "";
+                var created = await client.CreateConversationAsync();
+                var id = created?["id"]?.GetValue<string>() ?? "";
+                await client.StartTurnAsync($"attached {name}", id, attachment);
+                var exported = await client.ExportConversationAsync(id);
+                lines.Add($"attached: {name} ({bytes} bytes)");
+                lines.Add($"in conversation: {exported.Contains(name)}");
+                lines.Add($"copy exists: {File.Exists(local)}");
+            }
+            catch (Exception error)
+            {
+                lines.Add($"error: {error.Message}");
+            }
+        }
+
+        File.WriteAllLines(path, lines);
         Application.Current.Shutdown();
     }
 
@@ -599,6 +635,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        var attachment = pendingAttachment;
+        pendingAttachment = null;
+        PendingAttachmentBar.Visibility = Visibility.Collapsed;
+        var body = goal.Length > 0
+            ? goal
+            : attachment != null ? Describe(attachment) : "";
+
         running = true;
         SendButton.IsEnabled = true;
         SendButton.Content = "Stop";
@@ -608,12 +651,13 @@ public partial class MainWindow : Window
         }
 
         StatusText.Text = "Working...";
-        messages.Add(new MessageVm { Role = "user", Text = goal });
+        messages.Add(new MessageVm { Role = "user", Text = body });
         EmptyState.Visibility = Visibility.Collapsed;
         ScrollToEnd();
         try
         {
-            var (answer, conversationId, title, steps, chainOk) = await client.StartTurnAsync(goal, currentId);
+            var (answer, conversationId, title, steps, chainOk) =
+                await client.StartTurnAsync(body, currentId, attachment);
             currentId = conversationId;
             messages.Add(new MessageVm { Role = "assistant", Text = answer });
             Log($"HOPA: {answer}");
@@ -672,7 +716,7 @@ public partial class MainWindow : Window
         }
 
         var goal = Composer.Text.Trim();
-        if (goal.Length == 0)
+        if (goal.Length == 0 && pendingAttachment == null)
         {
             return;
         }
@@ -712,6 +756,70 @@ public partial class MainWindow : Window
     }
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e) => ApplyFilter();
+
+    private async void Window_Drop(object sender, DragEventArgs e)
+    {
+        if (client == null || !e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            return;
+        }
+
+        if (e.Data.GetData(DataFormats.FileDrop) is not string[] files || files.Length == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var attachment = await client.AttachFileAsync(files[0]);
+            pendingAttachment = attachment;
+            PendingAttachmentName.Text = attachment["name"]?.GetValue<string>() ?? "file";
+            var bytes = attachment["bytes"]?.GetValue<long>() ?? 0;
+            PendingAttachmentDetail.Text =
+                $"{HumanSize(bytes)} \u00B7 {attachment["mime"]?.GetValue<string>()}";
+            PendingAttachmentBar.Visibility = Visibility.Visible;
+            StatusText.Text = "File ready to send";
+        }
+        catch (Exception error)
+        {
+            StatusText.Text = error.Message;
+        }
+    }
+
+    private async void RemoveAttachment_Click(object sender, RoutedEventArgs e)
+    {
+        var path = pendingAttachment?["path"]?.GetValue<string>();
+        pendingAttachment = null;
+        PendingAttachmentBar.Visibility = Visibility.Collapsed;
+        if (path != null && client != null)
+        {
+            try
+            {
+                await client.RequestAsync("file.remove", new JsonObject { ["path"] = path },
+                    TimeSpan.FromSeconds(10));
+            }
+            catch (Exception error)
+            {
+                Log($"attachment: {error.Message}");
+            }
+        }
+    }
+
+    private static string HumanSize(long bytes) => bytes switch
+    {
+        >= 1024 * 1024 => $"{bytes / (1024.0 * 1024.0):0.0} MB",
+        >= 1024 => $"{bytes / 1024} KB",
+        _ => $"{bytes} B",
+    };
+
+    private static string Describe(JsonObject attachment)
+    {
+        var name = attachment["name"]?.GetValue<string>() ?? "file";
+        var mime = attachment["mime"]?.GetValue<string>() ?? "";
+        return mime.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+            ? $"Shared an image: {name}"
+            : $"Shared a file: {name}";
+    }
 
     private void ApplyFilter()
     {
