@@ -50,7 +50,7 @@ fun main() {
                 conversationId = message.text("conversationId").ifBlank { null },
             )
 
-            "device.result" -> device.resolve(message.text("id"), message.text("ok").toBoolean())
+            "device.result" -> device.resolve(message.text("id"), message)
             "approval.result" -> approval.resolve(message.text("id"), message.text("allow").toBoolean())
             "shutdown" -> return
             else -> io.log("unknown message: ${message.type()}")

@@ -66,6 +66,12 @@ public partial class App : Application
             return;
         }
 
+        if (args.Length >= 2 && args[0] == "--pc-check")
+        {
+            _ = window.PcCheckAsync(args[1]);
+            return;
+        }
+
         if (args.Length >= 4 && args[0] == "--pair")
         {
             _ = window.PairAsync(args[1], args[2], args[3]);

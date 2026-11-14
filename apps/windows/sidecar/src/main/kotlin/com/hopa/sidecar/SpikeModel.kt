@@ -27,6 +27,12 @@ class SpikeModel : ModelPort {
         if (goal.contains("open settings", ignoreCase = true) && !lastAssistant.contains("\"ui.launch\"")) {
             return ModelReply("""{"schemaVersion":"1","kind":"ui.launch","app":"com.android.settings","timeoutMs":8000}""")
         }
+        if (goal.contains("open notepad", ignoreCase = true) && !lastAssistant.contains("\"ui.launch\"")) {
+            return ModelReply("""{"schemaVersion":"1","kind":"ui.launch","app":"notepad","timeoutMs":8000}""")
+        }
+        if (goal.contains("type", ignoreCase = true) && !lastAssistant.contains("\"ui.type\"")) {
+            return ModelReply("""{"schemaVersion":"1","kind":"ui.type","text":"hello from HOPA"}""")
+        }
         return ModelReply("Sidecar answered: \"${goal.take(80)}\".")
     }
 }

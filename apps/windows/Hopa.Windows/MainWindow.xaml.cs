@@ -19,6 +19,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<MessageVm> messages = new();
     private readonly Dictionary<string, string> drafts = new();
     private readonly List<string> log = new();
+    private readonly WindowsDevice device = new();
     private SidecarClient? client;
     private Task? connecting;
     private string? currentId;
@@ -179,6 +180,22 @@ public partial class MainWindow : Window
         autoApproval = "allow";
         await ConnectAsync();
         await SendAsync("open settings on the phone");
+        WriteLog();
+        Application.Current.Shutdown();
+    }
+
+    public async Task PcCheckAsync(string path)
+    {
+        var settings = new SettingsStore();
+        var current = settings.Load();
+        current.UseBridge = false;
+        settings.Save(current);
+
+        outputPath = path;
+        autoApproval = "allow";
+        await ConnectAsync();
+        await SendAsync("open notepad");
+        await SendAsync("type hello in notepad");
         WriteLog();
         Application.Current.Shutdown();
     }
@@ -607,17 +624,24 @@ public partial class MainWindow : Window
 
         try
         {
-            if (op == "tap")
+            if (op == "observe")
             {
-                var result = NotepadClicker.ClickTextArea();
-                Log($"device: {result}");
-                client.SendDeviceResult(id, true);
+                var (observation, nodes) = device.Observe();
+                Log($"device: observed {nodes} nodes in '{observation["app"]}'");
+                client.SendDeviceResult(id, true, observation: observation);
                 return;
             }
 
-            var reason = $"the W1 host cannot do '{op}' yet";
-            Log($"device: {reason}");
-            client.SendDeviceResult(id, false, reason);
+            if (op == "foreground")
+            {
+                var app = device.ForegroundApp();
+                client.SendDeviceResult(id, true, app: app);
+                return;
+            }
+
+            var info = device.Act(op, message);
+            Log($"device: {info}");
+            client.SendDeviceResult(id, true);
         }
         catch (Exception error)
         {

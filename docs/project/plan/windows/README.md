@@ -1,6 +1,6 @@
 # Windows client plan
 
-Status: **v1, W2 complete (6 of 6); W3 next.** Written 2026-11-14 from the
+Status: **v1, W3 in progress: the adapter is built, live input verification is blocked by the locked session.** Written 2026-11-14 from the
 Android plan, the expansion portfolio and ADR-0021.
 
 Android is the active client; Windows is next; Harmony is frozen (ADR-0020).

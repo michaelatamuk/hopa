@@ -181,7 +181,12 @@ public sealed class SidecarClient : IAsyncDisposable
         });
     }
 
-    public void SendDeviceResult(string id, bool ok, string? error = null)
+    public void SendDeviceResult(
+        string id,
+        bool ok,
+        string? error = null,
+        JsonObject? observation = null,
+        string? app = null)
     {
         var message = new JsonObject
         {
@@ -192,6 +197,16 @@ public sealed class SidecarClient : IAsyncDisposable
         if (error != null)
         {
             message["error"] = error;
+        }
+
+        if (observation != null)
+        {
+            message["observation"] = observation;
+        }
+
+        if (app != null)
+        {
+            message["app"] = app;
         }
 
         Send(message);

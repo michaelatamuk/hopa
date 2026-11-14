@@ -1,54 +1,41 @@
 package com.hopa.sidecar
 
 import com.hopa.core.contracts.Observation
-import com.hopa.core.contracts.ObservationNode
-import com.hopa.core.contracts.ScreenSize
-import com.hopa.core.observation.ObservationHasher
+import com.hopa.core.json.HopaJson
+import com.hopa.core.observation.ObservationProducer
 import com.hopa.core.ports.DevicePort
 import com.hopa.core.ports.InstalledApp
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 /**
- * W0: every device action travels to the .NET host and is executed with UI
- * Automation there. Observation is a fixed screen for now; W3 replaces it with
- * a real UIA tree.
+ * W3: the PC target. Observation and every action travel to the .NET host,
+ * which runs UI Automation; the producer applies refs, redaction and the hash
+ * on this side so the observation contract stays in one place.
  */
 class HostDevice(private val io: Stdio) : DevicePort {
-    private val pending = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+    private val pending = ConcurrentHashMap<String, CompletableDeferred<JsonObject>>()
     private val counter = AtomicInteger(0)
+    private val producer = ObservationProducer()
 
-    fun resolve(id: String, ok: Boolean) {
-        pending.remove(id)?.complete(ok)
+    fun resolve(id: String, result: JsonObject) {
+        pending.remove(id)?.complete(result)
     }
 
     override suspend fun observe(): Observation {
-        val tree = ObservationNode(
-            type = "root",
-            children = listOf(
-                ObservationNode(
-                    ref = "e1",
-                    type = "window",
-                    text = "Notepad",
-                    children = listOf(
-                        ObservationNode(ref = "e2", type = "edit", text = "Untitled"),
-                    ),
-                ),
-            ),
-        )
-        val observation = Observation(
-            id = "win-spike-${System.currentTimeMillis()}",
-            timestamp = System.currentTimeMillis(),
-            screenSize = ScreenSize(width = 1920, height = 1080),
-            text = "Notepad\nUntitled",
-            tree = tree,
-            app = "notepad",
-        )
-        return observation.copy(hash = ObservationHasher.hash(observation))
+        val result = request("observe") {}
+        val payload = result["observation"] as? JsonObject
+            ?: throw IllegalStateException("the host sent no observation")
+        val raw = HopaJson.element.decodeFromJsonElement(Observation.serializer(), payload)
+        return producer.produce(raw)
     }
 
     override suspend fun tap(ref: String?, x: Int?, y: Int?) {
@@ -104,23 +91,29 @@ class HostDevice(private val io: Stdio) : DevicePort {
     }
 
     override suspend fun stop(packageName: String) {
-        throw UnsupportedOperationException("W0 does not stop apps")
+        throw UnsupportedOperationException("the Windows adapter does not stop apps yet")
     }
 
-    override suspend fun foreground(): String = "notepad"
+    override suspend fun foreground(): String = request("foreground") {}.let { result ->
+        result["app"]?.jsonPrimitive?.contentOrNull.orEmpty()
+    }
 
     override suspend fun screenshot(): ByteArray? = null
 
     override suspend fun apps(): List<InstalledApp> = emptyList()
 
-    private suspend fun request(op: String, fields: JsonObjectBuilder.() -> Unit) {
+    private suspend fun request(op: String, fields: JsonObjectBuilder.() -> Unit): JsonObject {
         val id = "req-${counter.incrementAndGet()}"
-        val deferred = CompletableDeferred<Boolean>()
+        val deferred = CompletableDeferred<JsonObject>()
         pending[id] = deferred
         io.send(Protocol.deviceRequest(id, op, fields))
-        val ok = withTimeout(15_000) { deferred.await() }
+        val result = withTimeout(20_000) { deferred.await() }
+        val ok = result["ok"]?.jsonPrimitive?.booleanOrNull == true
         if (!ok) {
-            throw IllegalStateException("the host could not $op; see its log")
+            throw IllegalStateException(
+                result["error"]?.jsonPrimitive?.contentOrNull ?: "the host refused $op",
+            )
         }
+        return result
     }
 }

@@ -1,0 +1,66 @@
+# W3 — the Windows device adapter (in progress)
+
+Date: 2026-11-14. Host: Windows; .NET 8; the user session is **locked**
+(`LockApp` is the foreground window), which blocks the input half of this phase.
+
+## What exists
+
+- `apps/windows/Hopa.Windows/WindowsDevice.cs`: a real UI Automation adapter.
+  - `Observe` builds the observation JSON for the Kotlin contract: a pre-order
+    tree with refs (`e1`..), control type, name, automation id, bounds,
+    clickable/scrollable/focused/enabled/visible, and password fields marked as
+    `password` so the producer drops them.
+  - `tap` tries the UIA patterns first (`Invoke`, `SelectionItem`) and falls back
+    to a mouse click at the element centre or the given coordinates.
+  - `doubleTap`, `longPress`, `type` (Value pattern, then the keyboard), `swipe`,
+    `back` (Escape), `home` (Win+D), `launch` (shell), `foreground` (process).
+  - Every property read and pattern call is wrapped: a control that disappears
+    throws a readable error instead of crashing the host.
+- The sidecar sends `observe` over NDJSON and runs `ObservationProducer` on the
+  host's tree, so redaction, caps, refs and the hash stay in one place.
+- The W1 notepad-only clicker is gone; the host is a device adapter now.
+
+## Verified so far
+
+`Hopa.Windows.exe --pc-check` (the session was already locked):
+
+```
+device: observed 32 nodes in 'LockApp'
+device: launched notepad
+device: observed 32 nodes in 'LockApp'
+step #0 ui.launch [read] executed=True verified=False hash=sha256:0ca
+device: observed 32 nodes in 'LockApp'
+device: typed 15 chars
+device: observed 1 nodes in 'Idle'
+step #0 ui.type [read] executed=True verified=True hash=sha256:a64
+```
+
+What this proves: the observation is a real UIA tree (32 nodes from the lock
+screen), the producer accepts it, refs and the hash are attached, `launch` works,
+and `foreground` reports the process name.
+
+What it does **not** prove: that a click or typed text reached a real control.
+`verified=True` on the type step is the observation changing from `LockApp` to
+`Idle` when the lock screen handed over, not the text landing in Notepad. The
+lock screen is a secure surface; the honest answer is "cannot see or touch", not
+a success.
+
+## Blocked
+
+- The session must be unlocked for `tap`/`type` verification, the screenshots and
+  the app matrix. Rerun after unlocking:
+
+  ```powershell
+  cd apps\windows\Hopa.Windows
+  .\bin\Debug\net8.0-windows\Hopa.Windows.exe --pc-check out.txt
+  ```
+
+  Expected: `open notepad` observes `Hopa.Windows`, launches Notepad, the next
+  turn observes `notepad`, types into it, and the second observation differs.
+
+## Plan boxes
+
+None of the eight W3 boxes is ticked yet: the adapter is built, but the input
+and matrix evidence needs an unlocked desktop. The secure-surface refusal (W0's
+last box) is part of this phase too: a locked or elevated window must report
+"cannot see or touch" and never a false success.
