@@ -31,6 +31,42 @@ public sealed class WindowsDevice : IDisposable
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 
+    private static readonly string[] SecureProcesses =
+    {
+        "lockapp", "logonui", "winlogon", "screensaver", "logonui.exe",
+    };
+
+    /// <summary>
+    /// The lock screen and the logon desktop are secure surfaces: UI Automation
+    /// can list a few nodes, but input is refused by the system. Say so instead
+    /// of pretending the tree is the user's screen.
+    /// </summary>
+    private bool IsSecureSurface(out string processName)
+    {
+        var hwnd = GetForegroundWindow();
+        GetWindowThreadProcessId(hwnd, out var pid);
+        processName = "";
+        try
+        {
+            processName = Process.GetProcessById((int)pid).ProcessName;
+        }
+        catch
+        {
+            return false;
+        }
+
+        return SecureProcesses.Contains(processName.ToLowerInvariant());
+    }
+
+    private void RefuseSecureSurface()
+    {
+        if (IsSecureSurface(out var processName))
+        {
+            throw new InvalidOperationException(
+                $"the screen is '{processName}' (locked or secure); HOPA cannot see or touch it");
+        }
+    }
+
     public System.Windows.Size ScreenSize()
     {
         var width = (int)System.Windows.SystemParameters.PrimaryScreenWidth;
@@ -55,6 +91,7 @@ public sealed class WindowsDevice : IDisposable
     /// <summary>Builds the observation JSON the Kotlin contract decodes.</summary>
     public (System.Text.Json.Nodes.JsonObject Observation, int Nodes) Observe()
     {
+        RefuseSecureSurface();
         counter = 0;
         refs.Clear();
         root = ForegroundElement();
@@ -91,6 +128,7 @@ public sealed class WindowsDevice : IDisposable
 
     public string Act(string op, System.Text.Json.Nodes.JsonObject message)
     {
+        RefuseSecureSurface();
         var point = PointFor(message);
         var screenPoint = new System.Drawing.Point(point.X, point.Y);
         switch (op)
@@ -383,3 +421,4 @@ public sealed class WindowsDevice : IDisposable
         }
     }
 }
+

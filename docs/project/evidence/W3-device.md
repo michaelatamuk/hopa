@@ -45,6 +45,21 @@ What it does **not** prove: that a click or typed text reached a real control.
 lock screen is a secure surface; the honest answer is "cannot see or touch", not
 a success.
 
+## Secure surface (the lock screen)
+
+The session was locked, so the foreground process was `LockApp` — a real secure
+surface. The adapter now refuses before touching anything:
+
+```
+device error: the screen is 'LockApp' (locked or secure); HOPA cannot see or touch it
+HOPA: I could not do that: the screen is 'LockApp' (locked or secure); HOPA cannot see...
+step #0 ui.launch [read] executed=False verified=False error=E_DEVICE hash=sha256:ea6
+```
+
+Both the observation and the action refuse; no false success, no screenshot. That
+closes W0's last box: a secure window says "cannot see or touch" and the app
+repeats it.
+
 ## Blocked
 
 - The session must be unlocked for `tap`/`type` verification, the screenshots and

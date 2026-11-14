@@ -1,6 +1,6 @@
 # Windows client plan
 
-Status: **v1, W3 in progress: the adapter is built, live input verification is blocked by the locked session.** Written 2026-11-14 from the
+Status: **v1, W0 complete (7 of 7); W3 in progress: the adapter is built, live input verification is blocked by the locked session.** Written 2026-11-14 from the
 Android plan, the expansion portfolio and ADR-0021.
 
 Android is the active client; Windows is next; Harmony is frozen (ADR-0020).
@@ -79,12 +79,11 @@ window -> sidecar -> core loop -> DevicePort
 - [x] NDJSON protocol v0 written down: message names, fields, version, error shape. (evidence: docs/project/plan/windows/protocol.md)
 - [x] A WPF window starts the sidecar, sends `turn.start` and shows the answer. (evidence: docs/media/windows-w0.png; W0-spike "One turn from the window")
 - [x] One UIA click in Notepad goes through `device.request` -> FlaUI -> `device.result`. (evidence: W0-spike "One UIA click": "clicked Notepad ... at 640,464")
-- [ ] Honest failure: a secure window (UAC prompt or a `FLAG_SECURE`-like surface) returns "cannot see or touch"; the app says so.
+- [x] Honest failure: a secure window (UAC prompt or a `FLAG_SECURE`-like surface) returns "cannot see or touch"; the app says so. (evidence: W3-device "Secure surface": LockApp refused with E_DEVICE, message repeated by the app)
 - [x] Spike notes in `docs/project/evidence/W0-spike.md` with screenshots and the protocol file. (evidence: docs/project/evidence/W0-spike.md)
 
-Gate: the four spike criteria in ADR-0021 hold on a Windows VM. Status: three
-hold; the secure-surface refusal moves to W3, where the `WindowsDevice` guard
-and the `uiAccess` helper exist to prove it.
+Gate: the four spike criteria in ADR-0021 hold on a Windows VM. All four do; the
+secure-surface refusal is recorded in W3 (the lock screen is the test surface).
 
 ### W1. Shell (3 weeks)
 
