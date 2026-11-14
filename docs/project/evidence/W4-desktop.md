@@ -39,6 +39,32 @@ Pinned conversations sort first; archived ones leave the list unless "Show
 archived" is on; the row menu toggles both. The seven JVM tests for the stores
 also run in CI (`gradlew -p apps/windows/sidecar test`).
 
+## Voice
+
+- **Read aloud** now uses the bridge `/speak` when an address and token are
+  configured, and falls back to `System.Speech` otherwise.
+- **Dictation**: the composer has a Mic button; it records 16 kHz mono PCM with
+  NAudio, wraps it in a WAV header and posts it to the bridge `/transcribe`; the
+  text lands in the composer and is never sent automatically.
+- On a 401 the voice client calls `/refresh` with the stored refresh token and
+  retries once, persisting the rotated pair; the sidecar also sends its rotated
+  pair to the host (`session`) so the two halves stay in step.
+
+Round-trip through the real bridge (no microphone needed):
+
+```
+Hopa.Windows.exe --voice-check http://127.0.0.1:8897 out.txt
+speak: ok (82040 bytes)
+transcribe: 'Hello from hope that'
+round-trip: ok
+```
+
+The bridge synthesised "hello from hopa" with the PC voice, the client posted the
+WAV back to `/transcribe`, and the text came out recognisable.
+
+Microphone capture itself is wired but **not verified**: the session is locked
+and no capture was exercised.
+
 ## Not verified yet
 
 - The tray icon, the balloon, the shortcuts and the window restore need an

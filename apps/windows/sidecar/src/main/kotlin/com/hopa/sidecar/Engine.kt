@@ -52,6 +52,7 @@ class Engine(
                                 ?.let { session ->
                                     config.setSession(session.token, session.refresh)
                                     io.log("bridge token refreshed")
+                                    io.send(Protocol.session(session.token, session.refresh))
                                     session.token
                                 }
                         }

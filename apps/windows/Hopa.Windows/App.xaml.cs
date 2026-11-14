@@ -66,6 +66,12 @@ public partial class App : Application
             return;
         }
 
+        if (args.Length >= 3 && args[0] == "--voice-check")
+        {
+            _ = window.VoiceCheckAsync(args[1], args[2]);
+            return;
+        }
+
         if (args.Length >= 2 && args[0] == "--history-check")
         {
             _ = window.HistoryCheckAsync(args[1]);

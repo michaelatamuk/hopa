@@ -25,6 +25,8 @@ public sealed class SidecarClient : IAsyncDisposable
 
     public event Action<JsonObject>? ApprovalRequested;
 
+    public event Action<JsonObject>? SessionUpdated;
+
     public SidecarClient()
     {
         var lib = Environment.GetEnvironmentVariable("HOPA_SIDECAR_LIB");
@@ -334,6 +336,9 @@ public sealed class SidecarClient : IAsyncDisposable
                     break;
                 case "approval.request":
                     ApprovalRequested?.Invoke(message);
+                    break;
+                case "session":
+                    SessionUpdated?.Invoke(message);
                     break;
                 default:
                     var id = message["id"]?.GetValue<string>();

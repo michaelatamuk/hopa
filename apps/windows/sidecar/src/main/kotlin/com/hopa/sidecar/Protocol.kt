@@ -83,6 +83,13 @@ object Protocol {
         put("model", model)
     }
 
+    /** The sidecar rotated the pair; the host persists it (never logged). */
+    fun session(token: String, refresh: String): JsonObject = buildJsonObject {
+        put("type", "session")
+        put("token", token)
+        put("refresh", refresh)
+    }
+
     fun conversationDeleted(id: String, ok: Boolean): JsonObject = buildJsonObject {
         put("type", "conversation.deleted")
         put("id", id)

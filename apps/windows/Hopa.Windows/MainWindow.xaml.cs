@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, string> drafts = new();
     private readonly List<string> log = new();
     private readonly WindowsDevice device = new();
+    private readonly VoiceClient voice = new();
     private SpeechSynthesizer? speech;
     private System.Windows.Forms.NotifyIcon? tray;
     private string lastAnswer = "";
@@ -68,6 +69,7 @@ public partial class MainWindow : Window
         {
             tray?.Dispose();
             speech?.Dispose();
+            voice.Dispose();
             device.Dispose();
         };
         Loaded += async (_, _) => await ConnectAsync();
@@ -262,6 +264,30 @@ public partial class MainWindow : Window
         Application.Current.Shutdown();
     }
 
+    public async Task VoiceCheckAsync(string url, string path)
+    {
+        var token = CredentialStore.Read("hopa.bridge.token");
+        var lines = new List<string>();
+        try
+        {
+            var wav = await voice.SpeakAsync(url, token, "hello from hopa");
+            lines.Add($"speak: {(wav is { Length: > 44 } ? "ok" : "FAIL")} ({wav?.Length ?? 0} bytes)");
+            if (wav != null)
+            {
+                var text = await voice.TranscribeAsync(url, token, wav);
+                lines.Add($"transcribe: '{text}'");
+                lines.Add($"round-trip: {(text.Length > 0 ? "ok" : "FAIL")}");
+            }
+        }
+        catch (Exception error)
+        {
+            lines.Add($"error: {error.Message}");
+        }
+
+        File.WriteAllLines(path, lines);
+        Application.Current.Shutdown();
+    }
+
     public async Task HistoryCheckAsync(string path)
     {
         outputPath = path;
@@ -438,6 +464,17 @@ public partial class MainWindow : Window
             started.LogReceived += line => Log($"sidecar: {line}");
             started.DeviceRequested += OnDeviceRequested;
             started.ApprovalRequested += OnApprovalRequested;
+            started.SessionUpdated += message =>
+            {
+                var token = message["token"]?.GetValue<string>() ?? "";
+                var refresh = message["refresh"]?.GetValue<string>() ?? "";
+                if (token.Length > 0)
+                {
+                    CredentialStore.Write("hopa.bridge.token", token);
+                    CredentialStore.Write("hopa.bridge.refresh", refresh);
+                    Log("bridge session rotated; the host stored the new pair");
+                }
+            };
             client = started;
             StatusText.Text = "Ready";
             await RefreshAsync();
@@ -786,17 +823,97 @@ public partial class MainWindow : Window
         }
     }
 
-    private void Speak_Click(object sender, RoutedEventArgs e)
+    private async void Speak_Click(object sender, RoutedEventArgs e)
     {
         if (lastAnswer.Length == 0)
         {
             return;
         }
 
+        var settings = new SettingsStore().Load();
+        var token = CredentialStore.Read("hopa.bridge.token");
+        if (settings.BridgeUrl.Length > 0 && token.Length > 0)
+        {
+            try
+            {
+                var wav = await voice.SpeakAsync(settings.BridgeUrl, token, lastAnswer);
+                if (wav is { Length: > 44 })
+                {
+                    voice.Play(wav);
+                    StatusText.Text = "Reading aloud";
+                    return;
+                }
+            }
+            catch (Exception error)
+            {
+                Log($"voice: {error.Message}");
+            }
+        }
+
         speech ??= new SpeechSynthesizer();
         speech.SpeakAsyncCancelAll();
         speech.SpeakAsync(lastAnswer);
         StatusText.Text = "Reading aloud";
+    }
+
+    private async void Mic_Click(object sender, RoutedEventArgs e)
+    {
+        if (voice.Recording)
+        {
+            var wav = voice.StopCapture();
+            MicButton.Content = "Mic";
+            StatusText.Text = "";
+            if (wav.Length <= 44)
+            {
+                StatusText.Text = "Nothing recorded.";
+                return;
+            }
+
+            await TranscribeAsync(wav);
+            return;
+        }
+
+        try
+        {
+            voice.StartCapture();
+            MicButton.Content = "Stop";
+            StatusText.Text = "Listening...";
+        }
+        catch (Exception error)
+        {
+            StatusText.Text = $"No microphone: {error.Message}";
+        }
+    }
+
+    private async Task TranscribeAsync(byte[] wav)
+    {
+        var settings = new SettingsStore().Load();
+        var token = CredentialStore.Read("hopa.bridge.token");
+        if (settings.BridgeUrl.Length == 0 || token.Length == 0)
+        {
+            StatusText.Text = "Dictation needs the bridge. Set its address and token in Settings.";
+            return;
+        }
+
+        StatusText.Text = "Transcribing...";
+        try
+        {
+            var text = await voice.TranscribeAsync(settings.BridgeUrl, token, wav);
+            if (text.Length == 0)
+            {
+                StatusText.Text = "I did not catch that.";
+                return;
+            }
+
+            Composer.Text = Composer.Text.Length == 0 ? text : $"{Composer.Text} {text}";
+            Composer.CaretIndex = Composer.Text.Length;
+            StatusText.Text = "";
+        }
+        catch (Exception error)
+        {
+            StatusText.Text = error.Message;
+            Log($"voice: {error.Message}");
+        }
     }
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)

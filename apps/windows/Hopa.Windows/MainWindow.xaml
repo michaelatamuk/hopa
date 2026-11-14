@@ -147,12 +147,17 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBox x:Name="Composer" BorderThickness="0" Background="Transparent"
                              FontSize="14" TextWrapping="Wrap" MinHeight="38"
                              VerticalContentAlignment="Center" KeyDown="Composer_KeyDown"
                              AutomationProperties.Name="Message" />
-                    <Button x:Name="SendButton" Grid.Column="1" Content="Send" Width="84" Height="38"
+                    <Button x:Name="MicButton" Grid.Column="1" Content="Mic" Width="56" Height="38"
+                            Margin="0,0,6,0" Background="Transparent" BorderThickness="0"
+                            Foreground="#6B665C" Click="Mic_Click"
+                            AutomationProperties.Name="Dictate a message" />
+                    <Button x:Name="SendButton" Grid.Column="2" Content="Send" Width="84" Height="38"
                             Background="#0A59F7" Foreground="#FFFFFF" BorderThickness="0"
                             Click="Send_Click" AutomationProperties.Name="Send message" />
                 </Grid>
