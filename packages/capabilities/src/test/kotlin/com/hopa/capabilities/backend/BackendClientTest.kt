@@ -2,6 +2,7 @@ package com.hopa.capabilities.backend
 
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -18,6 +19,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BackendClientTest {
@@ -84,6 +86,39 @@ class BackendClientTest {
         server.shutdown()
     }
 
+    @Test
+    fun `a frame that arrives after stop cannot go live again`() = runBlocking {
+        val server = MockWebServer()
+        val peer = CompletableDeferred<WebSocket>()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                peer.complete(webSocket)
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                webSocket.send(helloAck())
+            }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                // Withhold the close reply so the peer stays readable: a frame
+                // sent below must reach the client after stop() has completed.
+            }
+        }))
+        val client = clientFor(server)
+        client.start(this)
+        withTimeout(5_000) { client.state.first { it is BackendState.Live } }
+        client.stop()
+        assertEquals(BackendState.Disconnected, client.state.value)
+
+        val gateway = withTimeout(5_000) { peer.await() }
+        assertTrue(gateway.send(lateHelloAck()))
+        delay(500) // a localhost frame is read in microseconds; this is ample
+        assertEquals(BackendState.Disconnected, client.state.value)
+
+        gateway.close(1000, "done")
+        server.shutdown()
+    }
+
     private open class FakeGateway : WebSocketListener() {
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
             webSocket.close(1000, null)
@@ -114,4 +149,8 @@ class BackendClientTest {
     private fun helloAck(): String =
         """{"v":1,"id":"a1","type":"device.hello.ack","ts":1,"to":"dev-1",
         "body":{"session":"s","serverTime":1,"heartbeatSec":25,"queued":2,"peers":["dev-2"]}}""".trimIndent()
+
+    private fun lateHelloAck(): String =
+        """{"v":1,"id":"a2","type":"device.hello.ack","ts":2,"to":"dev-9",
+        "body":{"session":"s2","serverTime":2,"heartbeatSec":25,"queued":9,"peers":[]}}""".trimIndent()
 }

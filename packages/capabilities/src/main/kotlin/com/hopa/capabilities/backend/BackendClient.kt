@@ -88,10 +88,12 @@ class BackendClient(
 
     private fun listener(closed: CompletableDeferred<Unit>) = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
+            if (socket !== webSocket) return
             webSocket.send(BackendCodec.encode(BackendCodec.hello(deviceName, appVersion, pushToken())))
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
+            if (socket !== webSocket) return
             val frame = BackendCodec.decodeOrNull(text) ?: return
             try {
                 when (frame.type) {
