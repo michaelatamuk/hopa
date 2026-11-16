@@ -465,6 +465,7 @@ git commit -m "feat(data): store the backend device identity and keep its tokens
 
 **Files:**
 - Create: `apps/android/app/src/main/kotlin/com/hopa/app/backend/BackendSession.kt`
+- Create: `apps/android/app/src/main/kotlin/com/hopa/app/backend/FirebaseToken.kt` (a two-method holder; Task 8 fills it from the service)
 - Modify: `apps/android/app/src/main/kotlin/com/hopa/app/di/AppContainer.kt`
 - Modify: `apps/android/app/src/main/kotlin/com/hopa/app/MainActivity.kt` (`onStart` → `onForeground`, `onStop` → `onBackground`)
 - Modify: `apps/android/app/src/main/AndroidManifest.xml` (INTERNET is already there; no change expected)
@@ -514,7 +515,7 @@ Expected: PASS.
 
 - [ ] **Step 5: Wire `AppContainer`, the activity lifecycle, and build**
 
-Add `val backend = BackendSession(settings, ::BackendPairing, { c, n, v -> BackendClient(...) }, Build.MODEL, BuildConfig.VERSION_NAME)`; expose `val firebaseAvailable: Boolean` (Task 8 fills it). `MainActivity.onStart` calls `container.backend.onForeground()` and `onStop` calls `onBackground()`.
+Add `val backend = BackendSession(settings, ::BackendPairing, { c, n, v -> BackendClient(...) }, Build.MODEL, BuildConfig.VERSION_NAME)`. `MainActivity.onStart` calls `container.backend.onForeground()` and `onStop` calls `onBackground()`.
 
 Run: `apps\android\gradlew.bat -p apps/android :app:assembleDebug`
 Expected: BUILD SUCCESSFUL.
@@ -534,7 +535,6 @@ git commit -m "feat(app): add the backend session that pairs, connects and wakes
 - Modify: `apps/android/gradle/libs.versions.toml`
 - Modify: `apps/android/build.gradle.kts`
 - Modify: `apps/android/app/build.gradle.kts`
-- Create: `apps/android/app/src/main/kotlin/com/hopa/app/backend/FirebaseToken.kt`
 - Create: `apps/android/app/src/main/kotlin/com/hopa/app/backend/WakeRequest.kt`
 - Create: `apps/android/app/src/main/kotlin/com/hopa/app/backend/HopaMessagingService.kt`
 - Create: `tools/scripts/fetch-google-services.ps1`
@@ -544,7 +544,7 @@ git commit -m "feat(app): add the backend session that pairs, connects and wakes
 
 **Interfaces:**
 - Produces:
-  - `object FirebaseToken { fun current(): String?; fun set(value: String?) }`
+  - `object FirebaseToken { fun current(): String?; fun set(value: String?) }` (Task 7 creates it; Task 8 calls `set` from the messaging service)
   - `data class WakeRequest(val taskId: String, val traceId: String)` and `object WakeRequests { fun from(data: Map<String, String>): WakeRequest? }`
   - `class HopaMessagingService : FirebaseMessagingService` registered in the manifest with the `com.google.firebase.MESSAGING_EVENT` intent filter.
   - `fetch-google-services.ps1` writes `apps/android/app/google-services.json`.
@@ -696,7 +696,7 @@ git commit -m "feat(app): run a remote task on the configured screen path and re
 - Test: `apps/android/app/src/test/kotlin/com/hopa/app/feature/settings/PairInputTest.kt`
 
 **Interfaces:**
-- Produces: `object PairInput { fun normalise(text: String, fallbackGatewayUrl: String): PairingLink? }` (delegates to `PairingLinks`), `SettingsUiState` fields `backendUrl`, `backendDeviceId`, `backendState`, `backendToken`, `fcmAvailable`.
+- Produces: `object PairInput { fun normalise(text: String, fallbackGatewayUrl: String): PairingLink? }` (delegates to `PairingLinks`), `SettingsUiState` fields `backendUrl`, `backendDeviceId`, `backendState`, `backendToken`, `fcmAvailable` (from `FirebaseApp.getApps(container.context).isNotEmpty()`).
 - `MainActivity` extras: `hopa.backendUrl`, `hopa.backendPair`, `hopa.backendName`.
 
 - [ ] **Step 1: Write the failing input test**
