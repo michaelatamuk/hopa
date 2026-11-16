@@ -41,7 +41,7 @@ class ExitRunTest {
     }
 
     @Test
-    fun `twenty round-trips over a real socket return twenty trace ids`() {
+    fun `twenty round-trips run twice over a real socket stay clean`() {
         val db = PostgresHarness.appDatabase()
         val clock = AtomicLong(1_763_212_800_000)
         val auth = PgAuth(db, clock = clock::get)
@@ -69,15 +69,26 @@ class ExitRunTest {
             val a = pair(pairing, "A", null)
             val b = pair(pairing, "B", a.householdId)
 
-            val result = ExitRun.run(
+            val first = ExitRun.run(
+                url = "ws://127.0.0.1:$port/v1/gateway",
+                tokenA = a.access,
+                tokenB = b.access,
+                rounds = 20,
+            )
+            // A second run must not see the first run's tasks again: every one
+            // was acked, so nothing is left queued or delivered.
+            val second = ExitRun.run(
                 url = "ws://127.0.0.1:$port/v1/gateway",
                 tokenA = a.access,
                 tokenB = b.access,
                 rounds = 20,
             )
 
-            assertEquals(20, result.size)
-            assertEquals(20, result.toSet().size)
+            assertEquals(20, first.size)
+            assertEquals(20, first.toSet().size)
+            assertEquals(20, second.size)
+            assertEquals(20, second.toSet().size)
+            assertEquals(40, (first + second).toSet().size)
         } finally {
             server.stop(0, 0)
         }

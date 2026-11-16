@@ -33,6 +33,7 @@ object ExitRun {
                     val aSends = round % 2 == 0
                     val sender = if (aSends) a else b
                     val receiver = if (aSends) b else a
+                    val senderId = if (aSends) idA else idB
                     val receiverId = if (aSends) idB else idA
 
                     sender.send(create(receiverId, UUID.randomUUID().toString()))
@@ -44,6 +45,27 @@ object ExitRun {
                     check(delivered.task == taskId) {
                         "round ${round + 1}: delivered ${delivered.task}, expected $taskId"
                     }
+
+                    // Ack the delivery, as the real client does: the task leaves
+                    // `delivered`, the sender sees the relayed ack, and a second
+                    // run does not receive this task again.
+                    receiver.send(
+                        Envelope(
+                            v = 1,
+                            id = UUID.randomUUID().toString(),
+                            type = "task.ack",
+                            ts = System.currentTimeMillis(),
+                            trace = accepted.trace,
+                            to = senderId,
+                            task = taskId,
+                            body = buildJsonObject { put("state", "delivered") },
+                        ),
+                    )
+                    val relayed = sender.expect("task.ack", 15_000)
+                    check(relayed.task == taskId) {
+                        "round ${round + 1}: relayed ack carried ${relayed.task}, expected $taskId"
+                    }
+                    receiver.expect("task.ack", 15_000)
 
                     traces += accepted.trace ?: error("round ${round + 1}: the ack carried no trace")
                 }
