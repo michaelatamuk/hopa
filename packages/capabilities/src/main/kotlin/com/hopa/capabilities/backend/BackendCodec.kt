@@ -29,7 +29,7 @@ object BackendCodec {
         put("body", frame.body)
     }.toString()
 
-    /** Null for anything that is not a frame with both an id and a type. */
+    /** Null for anything that is not a v1 frame with both an id and a type. */
     fun decodeOrNull(text: String): BackendEnvelope? = try {
         val frame = HopaJson.element.parseToJsonElement(text).jsonObject
         BackendEnvelope(
@@ -42,7 +42,7 @@ object BackendCodec {
             to = frame["to"]?.jsonPrimitive?.contentOrNull,
             task = frame["task"]?.jsonPrimitive?.contentOrNull,
             body = frame["body"]?.jsonObject ?: JsonObject(emptyMap()),
-        ).takeIf { it.id.isNotBlank() && it.type.isNotBlank() }
+        ).takeIf { it.v == 1 && it.id.isNotBlank() && it.type.isNotBlank() }
     } catch (error: Exception) {
         null
     }

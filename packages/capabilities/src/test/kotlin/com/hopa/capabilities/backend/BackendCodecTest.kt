@@ -30,6 +30,12 @@ class BackendCodecTest {
     }
 
     @Test
+    fun `a frame whose major version is not one is refused`() {
+        assertNull(BackendCodec.decodeOrNull("""{"v":2,"id":"i1","type":"presence","ts":1}"""))
+        assertEquals(1, BackendCodec.decodeOrNull("""{"v":1,"id":"i1","type":"presence","ts":1}""")!!.v)
+    }
+
+    @Test
     fun `hello carries the push token only when there is one`() {
         val withToken = BackendCodec.hello("Xiaomi 15T Pro", "0.1.0", "tok")
         assertEquals("tok", withToken.body["pushToken"]!!.jsonPrimitive.content)
