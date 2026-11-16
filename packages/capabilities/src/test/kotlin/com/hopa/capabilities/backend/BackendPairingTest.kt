@@ -92,11 +92,8 @@ class BackendPairingTest {
         }
         try {
             val pairing = BackendPairing(gateway(server))
-            val message = try {
+            val message = messageOf {
                 pairing.claim(link(server), name = "Xiaomi 15T Pro", publicKey = "pk", pushToken = null)
-                "no error"
-            } catch (error: IllegalStateException) {
-                error.message.orEmpty()
             }
 
             assertEquals("pairing refused: E_SCHEMA expired", message)
@@ -119,15 +116,90 @@ class BackendPairingTest {
             start()
         }
         try {
-            val message = try {
-                BackendPairing(gateway(server)).refresh("r1")
-                "no error"
-            } catch (error: IllegalStateException) {
-                error.message.orEmpty()
-            }
+            val message = messageOf { BackendPairing(gateway(server)).refresh("r1") }
 
             assertEquals("pairing refused: E_AUTH bad <redacted>", message)
             assertFalse(message.contains("r1"))
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `a malformed success body is refused without echoing it`() = runBlocking {
+        val bodies = listOf(
+            """[{"accessToken":"a1","refreshToken":"r1"}]""",
+            "{\"accessToken\":\"a1\",\"refreshToken\":\"r1\"",
+        )
+        val server = MockWebServer().apply {
+            bodies.forEach { enqueue(MockResponse().setResponseCode(201).setBody(it)) }
+            start()
+        }
+        try {
+            val pairing = BackendPairing(gateway(server))
+            repeat(bodies.size) {
+                val message = messageOf {
+                    pairing.claim(link(server), name = "Xiaomi 15T Pro", publicKey = "pk", pushToken = null)
+                }
+                assertEquals("pairing returned no JSON object", message)
+                assertFalse(message.contains("a1"))
+                assertFalse(message.contains("r1"))
+            }
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `a success without tokens is refused on both paths`() = runBlocking {
+        val server = MockWebServer().apply {
+            enqueue(
+                MockResponse().setResponseCode(201).setBody(
+                    """{"deviceId":"d1","householdId":"h1","refreshToken":"r1",""" +
+                        """"expiresAt":"2026-11-17T00:00:00Z"}""",
+                ),
+            )
+            enqueue(
+                MockResponse().setResponseCode(200).setBody(
+                    """{"refreshToken":"r2","expiresAt":"2026-11-17T00:15:00Z"}""",
+                ),
+            )
+            start()
+        }
+        try {
+            val pairing = BackendPairing(gateway(server))
+            val claimMessage = messageOf {
+                pairing.claim(link(server), name = "Xiaomi 15T Pro", publicKey = "pk", pushToken = null)
+            }
+            val refreshMessage = messageOf { pairing.refresh("r1") }
+
+            assertEquals("pairing response is incomplete: missing tokens", claimMessage)
+            assertEquals("pairing response is incomplete: missing tokens", refreshMessage)
+            assertFalse(claimMessage.contains("r1"))
+            assertFalse(refreshMessage.contains("r2"))
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `a claim without a device identity is refused`() = runBlocking {
+        val server = MockWebServer().apply {
+            enqueue(
+                MockResponse().setResponseCode(201).setBody(
+                    """{"accessToken":"a1","refreshToken":"r1","expiresAt":"2026-11-17T00:00:00Z"}""",
+                ),
+            )
+            start()
+        }
+        try {
+            val message = messageOf {
+                BackendPairing(gateway(server))
+                    .claim(link(server), name = "Xiaomi 15T Pro", publicKey = "pk", pushToken = null)
+            }
+
+            assertEquals("pairing response is incomplete: missing device identity", message)
+            assertFalse(message.contains("a1"))
         } finally {
             server.shutdown()
         }
@@ -143,6 +215,13 @@ class BackendPairingTest {
         val rebuilt = KeyFactory.getInstance("X25519")
             .generatePrivate(PKCS8EncodedKeySpec(Base64.getDecoder().decode(encoded)))
         assertEquals(pair.`private`.encoded.toList(), rebuilt.encoded.toList())
+    }
+
+    private suspend fun messageOf(block: suspend () -> Unit): String = try {
+        block()
+        "no error"
+    } catch (error: IllegalStateException) {
+        error.message.orEmpty()
     }
 
     private fun link(server: MockWebServer) = PairingLink(

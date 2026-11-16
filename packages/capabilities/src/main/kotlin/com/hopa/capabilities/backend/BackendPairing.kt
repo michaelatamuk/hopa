@@ -43,6 +43,7 @@ class BackendPairing(
         }
         return credentials(
             post(path = "/v1/pair/claim", body = body.toString(), secrets = listOf(link.session)),
+            identityRequired = true,
         )
     }
 
@@ -52,16 +53,29 @@ class BackendPairing(
             body = buildJsonObject { put("refreshToken", refreshToken) }.toString(),
             secrets = listOf(refreshToken),
         ),
+        identityRequired = false,
     )
 
-    private fun credentials(payload: JsonObject) = BackendCredentials(
-        deviceId = payload["deviceId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-        householdId = payload["householdId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-        accessToken = payload["accessToken"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-        refreshToken = payload["refreshToken"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-        expiresAt = payload["expiresAt"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-        gatewayUrl = gatewayUrl,
-    )
+    private fun credentials(payload: JsonObject, identityRequired: Boolean): BackendCredentials {
+        val credentials = BackendCredentials(
+            deviceId = payload["deviceId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            householdId = payload["householdId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            accessToken = payload["accessToken"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            refreshToken = payload["refreshToken"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            expiresAt = payload["expiresAt"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            gatewayUrl = gatewayUrl,
+        )
+        if (credentials.accessToken.isBlank() ||
+            credentials.refreshToken.isBlank() ||
+            credentials.expiresAt.isBlank()
+        ) {
+            throw IllegalStateException("pairing response is incomplete: missing tokens")
+        }
+        if (identityRequired && (credentials.deviceId.isBlank() || credentials.householdId.isBlank())) {
+            throw IllegalStateException("pairing response is incomplete: missing device identity")
+        }
+        return credentials
+    }
 
     private suspend fun post(path: String, body: String, secrets: List<String>): JsonObject =
         withContext(Dispatchers.IO) {
@@ -82,7 +96,7 @@ class BackendPairing(
                 if (!it.isSuccessful) {
                     throw IllegalStateException(scrub(refusal(it.code, text), secrets))
                 }
-                parse(text, secrets)
+                parse(text)
             }
         }
 
@@ -93,10 +107,11 @@ class BackendPairing(
         return "pairing refused: ${code ?: "HTTP $status"} ${message.orEmpty()}".trim()
     }
 
-    private fun parse(text: String, secrets: List<String>): JsonObject = try {
+    /** Never echo the response: a malformed body may itself contain tokens. */
+    private fun parse(text: String): JsonObject = try {
         HopaJson.element.parseToJsonElement(text).jsonObject
     } catch (error: Exception) {
-        throw IllegalStateException(scrub("pairing returned no JSON: ${text.take(80)}", secrets))
+        throw IllegalStateException("pairing returned no JSON object")
     }
 
     /** A refusal may come back with the session or token echoed; it never leaves here. */
