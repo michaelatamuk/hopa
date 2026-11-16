@@ -1,0 +1,111 @@
+package com.hopa.capabilities.backend
+
+import com.hopa.core.json.HopaJson
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+
+/**
+ * The unauthenticated half of the backend: trade a pairing session for device
+ * tokens and rotate them later. Neither call puts a secret in a message, and
+ * a refusal is reported with the server's own code and text.
+ */
+class BackendPairing(
+    private val gatewayUrl: String,
+    private val http: OkHttpClient = OkHttpClient(),
+) {
+    private val base = BackendUrls.httpBase(gatewayUrl)
+
+    suspend fun claim(
+        link: PairingLink,
+        name: String,
+        publicKey: String,
+        pushToken: String?,
+    ): BackendCredentials {
+        val body = buildJsonObject {
+            put("session", link.session)
+            put("platform", "android")
+            put("name", name)
+            put("publicKey", publicKey)
+            put("alg", "x25519")
+            if (pushToken != null) put("pushToken", pushToken)
+        }
+        return credentials(
+            post(path = "/v1/pair/claim", body = body.toString(), secrets = listOf(link.session)),
+        )
+    }
+
+    suspend fun refresh(refreshToken: String): BackendCredentials = credentials(
+        post(
+            path = "/v1/token/refresh",
+            body = buildJsonObject { put("refreshToken", refreshToken) }.toString(),
+            secrets = listOf(refreshToken),
+        ),
+    )
+
+    private fun credentials(payload: JsonObject) = BackendCredentials(
+        deviceId = payload["deviceId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        householdId = payload["householdId"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        accessToken = payload["accessToken"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        refreshToken = payload["refreshToken"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        expiresAt = payload["expiresAt"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+        gatewayUrl = gatewayUrl,
+    )
+
+    private suspend fun post(path: String, body: String, secrets: List<String>): JsonObject =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(base + path)
+                .post(body.toRequestBody(JSON))
+                .build()
+            val client = http.newBuilder().callTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS).build()
+            val response = try {
+                client.newCall(request).execute()
+            } catch (error: IOException) {
+                throw IllegalStateException(
+                    scrub("backend unreachable: ${error.message.orEmpty()}", secrets),
+                )
+            }
+            response.use {
+                val text = it.body?.string().orEmpty()
+                if (!it.isSuccessful) {
+                    throw IllegalStateException(scrub(refusal(it.code, text), secrets))
+                }
+                parse(text, secrets)
+            }
+        }
+
+    private fun refusal(status: Int, text: String): String {
+        val error = runCatching { HopaJson.element.parseToJsonElement(text).jsonObject }.getOrNull()
+        val code = runCatching { error?.get("code")?.jsonPrimitive?.contentOrNull }.getOrNull()
+        val message = runCatching { error?.get("message")?.jsonPrimitive?.contentOrNull }.getOrNull()
+        return "pairing refused: ${code ?: "HTTP $status"} ${message.orEmpty()}".trim()
+    }
+
+    private fun parse(text: String, secrets: List<String>): JsonObject = try {
+        HopaJson.element.parseToJsonElement(text).jsonObject
+    } catch (error: Exception) {
+        throw IllegalStateException(scrub("pairing returned no JSON: ${text.take(80)}", secrets))
+    }
+
+    /** A refusal may come back with the session or token echoed; it never leaves here. */
+    private fun scrub(message: String, secrets: List<String>): String = secrets.fold(message) { text, secret ->
+        if (secret.isBlank()) text else text.replace(secret, "<redacted>")
+    }
+
+    private companion object {
+        val JSON = "application/json; charset=utf-8".toMediaType()
+        const val TIMEOUT_SECONDS = 20L
+    }
+}
