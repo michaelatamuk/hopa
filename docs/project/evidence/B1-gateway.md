@@ -40,15 +40,34 @@ curl -X DELETE -H "Authorization: Bearer $env:RENDER_API_KEY" `
 | 1 | Scripted round-trips on the deployed EU instance | 20/20, 10 each direction | **deployed 20/20, twice in a row** (13.5 s and 11.7 s) | `exitRun` against `wss://hopa-backend-test.onrender.com/v1/gateway`; trace ids below; local test `ExitRunTest > twenty round-trips run twice over a real socket stay clean` |
 | 2 | Replay: the same `task.create` 3× | 1 task, 1 delivery | passed | `PgTaskRoutingTest > the same message id three times creates one row and one delivery` |
 | 3 | Cross-household attempts | 1,000 refused `E_TENANT`, 0 rows | CI runs 1,000 (`HOPA_ISOLATION_ATTEMPTS=1000`); deployed: an outsider household gets 404 for another household's trace | `TenantIsolationTest > a thousand cross-household reads leak nothing`; deployed `GET /v1/traces/{id}` with a foreign token |
-| 4 | Real FCM wake on a sleeping phone | delivered, reconnect, task arrives | **server half proven on the deployed instance; only the physical phone is missing** | `FcmProbe` (OAuth 200, `messages:send` → `404 UNREGISTERED`) and the deployed wake below; `WakeTest` covers the mock, the phone half needs a registered token |
+| 4 | Real FCM wake on a sleeping phone | delivered, reconnect, task arrives | **closed for backend week 1: the server half is proven on the deployed instance; the client half moves to the Android track** | `FcmProbe` (OAuth 200, `messages:send` → `404 UNREGISTERED`), the deployed wake below, and `WakeTest` for the mock; the phone half needs a registered token, see "Carried out of week 1" |
 | 5 | Route latency in-region | p95 < 150 ms | **deployed p50 23 ms, p95 117 ms, max 204 ms** over 40 route spans (second, warm run); one cold-start message was 318 ms | trace `durationMs` from `/v1/traces`, warm run |
 | 6 | No secrets or payloads in logs | a day's logs are clean | **last 100 log entries: 0** occurrences of `Bearer `, either access token or the task body | `GET /v1/logs?ownerId=…&resource=srv-dbtfbnff3r2c73b45ri0` scan |
 | 7 | Migrations | fresh and an existing schema both apply, no manual SQL | deployed: Flyway read `<< Empty Schema >>`, created the history table and applied V1 at boot; a second boot logged `Schema "public" is up to date. No migration necessary.` | boot log lines below; second deploy |
 | 8 | No client regression | HOPA-Bench 20/20 | **deferred: `bench run` drives a HarmonyOS device through the bridge; no device in this environment** | not run in this slice |
 
-Row 4's server half is proven on the deployed instance; its phone half needs a
-physical device with a real registration token. Row 8 needs a HarmonyOS device.
-Neither gap is backend code; everything else ran against the deployed stack.
+Row 4 is closed on the backend side: everything the server owns (credential,
+project, send, invalid-token clearing, wake span, token bound) ran against the
+deployed instance. Its client half needs a physical Android device, so it moved
+to the Android track rather than holding week 1 open. Row 8 needs a HarmonyOS
+device and stays deferred. Neither gap is backend code; everything else ran
+against the deployed stack.
+
+## Carried out of week 1
+
+| Item | Why it left this slice | Where it is picked up |
+|---|---|---|
+| Row 4's client half: wake a sleeping phone, reconnect, receive the task | needs a physical Android device holding a real FCM registration token; the emulator has no Play services token and cannot be woken | the Android track, once the app registers a token; the server side of the check is already green |
+| Row 8: HOPA-Bench 20/20 | `bench run` drives a HarmonyOS device through the bridge; no device here | week 3 demo gate |
+
+The check to run when a phone is available, unchanged:
+
+1. Install the app, grant notifications, let it register a push token (confirm
+   `devices.push_token` is not null for that device inside its household).
+2. Background the app, turn the screen off, let the socket drop.
+3. Send a `task.create` from the PC to that device.
+4. Expect one `wake` span for that trace, a reconnect, the task arriving and the
+   task moving `queued → delivered`.
 
 ## Deployed trace ids (second run)
 
@@ -109,8 +128,9 @@ The two dashboard variables are set on the service (`HOPA_FCM_PROJECT` and
   and `route` only. FCM's `UNREGISTERED` had cleared the token, so no wake was
   attempted, which is the W1.5 behaviour.
 
-What is still missing for row 4 is the client half: a physical Android device
+What is missing for row 4 is only the client half: a physical Android device
 holding a real registration token, asleep, receiving the wake and reconnecting.
+That half belongs to the Android track; see "Carried out of week 1" above.
 
 ## Migration log
 
