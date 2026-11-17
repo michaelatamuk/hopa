@@ -5,10 +5,12 @@ import com.hopa.capabilities.backend.BackendLink
 import com.hopa.capabilities.backend.BackendState
 import com.hopa.capabilities.backend.ProcessedTaskLog
 import com.hopa.capabilities.device.UnavailableDevicePort
+import com.hopa.core.contracts.Action
 import com.hopa.core.contracts.ErrorCodes
 import com.hopa.core.contracts.HopaError
 import com.hopa.core.contracts.Observation
 import com.hopa.core.contracts.ObservationNode
+import com.hopa.core.contracts.RunRecord
 import com.hopa.core.contracts.ScreenSize
 import com.hopa.core.loop.TurnResult
 import com.hopa.core.observation.ScreenSource
@@ -17,9 +19,14 @@ import com.hopa.core.ports.DevicePort
 import com.hopa.core.ports.InstalledApp
 import com.hopa.data.settings.AppSettings
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -222,6 +229,84 @@ class RemoteTaskRunnerTest {
         )
         assertFalse(fixture.busyFlow.value)
     }
+
+    @Test
+    fun `each loop failure keeps its contract code and retryability`() = runBlocking {
+        val cases = listOf(
+            ErrorCodes.MODEL to ("E_MODEL" to true),
+            ErrorCodes.DEVICE to ("E_DEVICE" to true),
+            ErrorCodes.TIMEOUT to ("E_TIMEOUT" to true),
+            ErrorCodes.SCHEMA to ("E_SCHEMA" to false),
+            ErrorCodes.BLOCKED to ("E_BLOCKED" to false),
+            ErrorCodes.POLICY to ("E_POLICY" to false),
+        )
+
+        cases.forEach { (code, expected) ->
+            val fixture = Fixture(
+                locked = false,
+                result = TurnResult(
+                    answer = "The run failed.",
+                    error = HopaError(code, "failed"),
+                ),
+            )
+
+            fixture.runner.handle(delivery("t-$code"))
+
+            val error = fixture.link.frames.last()
+            assertEquals("task.error", error.type)
+            assertEquals(expected.first, error.body["code"]?.jsonPrimitive?.contentOrNull)
+            assertEquals(
+                expected.second.toString(),
+                error.body["retryable"]?.jsonPrimitive?.contentOrNull,
+            )
+        }
+    }
+
+    @Test
+    fun `a refused approval is an E_POLICY reply, not a result`() = runBlocking {
+        val denied = RunRecord(
+            runId = "run-t-approval",
+            step = 0,
+            traceId = "trace-t-approval",
+            action = Action(kind = "ui.tap", ref = "e1"),
+            classification = "payment",
+            approved = false,
+            observationHash = "sha256:0",
+            verified = false,
+            executed = false,
+            error = ErrorCodes.REFUSED,
+            prevHash = "sha256:0",
+            hash = "sha256:1",
+        )
+        val fixture = Fixture(
+            locked = false,
+            result = TurnResult(answer = "I did not run that.", records = listOf(denied)),
+        )
+
+        fixture.runner.handle(delivery("t-approval"))
+
+        val reply = fixture.link.frames.last()
+        assertEquals("task.error", reply.type)
+        assertEquals("E_POLICY", reply.body["code"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("false", reply.body["retryable"]?.jsonPrimitive?.contentOrNull)
+        assertTrue(
+            reply.body["message"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                .contains("approval"),
+        )
+    }
+
+    @Test
+    fun `cancelling a claimed run releases its id`() = runBlocking {
+        val fixture = Fixture(locked = false, runOverride = { awaitCancellation() })
+
+        val job = launch(Dispatchers.Default) { fixture.runner.handle(delivery("t-cancel")) }
+        withTimeout(5_000) { while (!fixture.log.seen("t-cancel")) delay(20) }
+        job.cancelAndJoin()
+
+        assertTrue(fixture.log.claim("t-cancel"))
+        assertFalse(fixture.busyFlow.value)
+        assertEquals(1, fixture.runs)
+    }
 }
 
 private fun delivery(id: String): BackendEnvelope = BackendEnvelope(
@@ -257,6 +342,7 @@ private class Fixture(
     surface: suspend () -> ScreenSourceDevice = { accessibilitySurface() },
     private val result: TurnResult? = TurnResult("Done."),
     surfaceTimeoutMs: Long = 25_000L,
+    private val runOverride: (suspend () -> TurnResult?)? = null,
 ) {
     val link = RecordingLink()
     val log = log()
@@ -285,6 +371,7 @@ private class Fixture(
                 screenOn = true,
                 keyguardLocked = locked,
                 accessibilityOn = true,
+                accessibilityBound = true,
             )
         },
         busy = busyFlow,
@@ -301,7 +388,7 @@ private class Fixture(
             runs += 1
             busySeen = busyFlow.value
             events += "run"
-            result
+            runOverride?.invoke() ?: result
         },
         taskStarted = {
             started += 1

@@ -10,9 +10,11 @@ import com.hopa.core.loop.TurnResult
 import com.hopa.core.observation.ScreenSourceDevice
 import com.hopa.data.settings.AppSettings
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -26,9 +28,9 @@ import kotlinx.serialization.json.jsonPrimitive
  * then [busy] is claimed for the whole attempt so chat cannot start a second
  * loop over the same screen. The foreground service and [taskStarted] follow
  * before the surface is resolved, so the wake socket outlives a slow helper.
- * The resolve itself is capped so a surface that never answers cannot hold the
- * socket, the busy claim or [gate]; [gate] keeps two remote deliveries from
- * running at once.
+ * One deadline covers the resolve and the turn: the whole attempt stays inside
+ * the foreground service's short-service window, and a timed-out turn still
+ * sends its answer. [gate] keeps two remote deliveries from running at once.
  */
 class RemoteTaskRunner(
     private val deviceId: () -> String,
@@ -49,6 +51,7 @@ class RemoteTaskRunner(
     private val taskFinished: () -> Unit = {},
     private val runTimeoutMs: Long = DEFAULT_TIMEOUT_MS,
     private val surfaceTimeoutMs: Long = DEFAULT_SURFACE_TIMEOUT_MS,
+    private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val gate = Mutex()
 
@@ -73,10 +76,12 @@ class RemoteTaskRunner(
             sendRefusal(live, task, RemoteRunPlanner.busyRefusal())
             return
         }
+        var claimed = false
         try {
             cancel.value = false
+            val startedAt = now()
             // A refused foreground start leaves the run in this coroutine; the
-            // cap below still reports a budget error if it cannot finish.
+            // deadline below still reports a budget error if it cannot finish.
             runCatching { startService() }
             taskStarted()
             val current = settings()
@@ -112,6 +117,7 @@ class RemoteTaskRunner(
                 if (!processed.claim(id)) {
                     return@withLock
                 }
+                claimed = true
                 // Only a task that will actually run asks for consent: an
                 // approval is a dialog on HOPA's own screen, and a refusal has
                 // nothing to approve. When HOPA is not visible, the
@@ -119,18 +125,27 @@ class RemoteTaskRunner(
                 if (!foreground()) {
                     postApproval()
                 }
+                val budget = RunBudget.remaining(runTimeoutMs, now() - startedAt)
                 val failed = try {
-                    runTurn(live, task, id, goal, surface, current)
+                    runTurn(live, task, id, goal, surface, current, budget)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
                     true
                 }
                 if (failed) {
-                    // The sender may resend this id after E_MODEL or E_BUDGET.
+                    // The sender may resend this id after a retryable failure.
                     processed.release(id)
+                    claimed = false
                 }
             }
+        } catch (cancelled: CancellationException) {
+            // A cancelled run would otherwise keep the claim, and the resend of
+            // its id would be skipped as a duplicate.
+            if (claimed) {
+                withContext(NonCancellable) { processed.release(id) }
+            }
+            throw cancelled
         } finally {
             stopService()
             releaseSurface()
@@ -166,6 +181,8 @@ class RemoteTaskRunner(
             // This runner already holds the claim, so the planner's own
             // busy check would only see itself.
             busy = false,
+            accessibilityBound = state.accessibilityBound,
+            lastError = surface.lastError,
         )
         return SurfaceStep(surface, plan)
     }
@@ -194,9 +211,10 @@ class RemoteTaskRunner(
         goal: String,
         surface: ScreenSourceDevice,
         current: AppSettings,
+        budgetMs: Long,
     ): Boolean {
         live.send(BackendReplies.progress(task, deviceId(), "Reading the screen"))
-        val result = attempt(task, id, goal, surface, current)
+        val result = attempt(task, id, goal, surface, current, budgetMs)
         return sendResult(live, task, result)
     }
 
@@ -206,26 +224,32 @@ class RemoteTaskRunner(
         goal: String,
         surface: ScreenSourceDevice,
         current: AppSettings,
-    ): TurnResult? = try {
-        withTimeoutOrNull(runTimeoutMs) {
-            run(
-                RemoteRunRequest(
-                    goal = goal,
-                    device = surface,
-                    settings = current,
-                    runId = "run-$id",
-                    traceId = task.trace ?: id,
-                    isCancelled = { cancel.value },
-                ),
+        budgetMs: Long,
+    ): TurnResult? {
+        if (budgetMs <= 0) {
+            return null
+        }
+        return try {
+            withTimeoutOrNull(budgetMs) {
+                run(
+                    RemoteRunRequest(
+                        goal = goal,
+                        device = surface,
+                        settings = current,
+                        runId = "run-$id",
+                        traceId = task.trace ?: id,
+                        isCancelled = { cancel.value },
+                    ),
+                )
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            TurnResult(
+                answer = "The run failed.",
+                error = HopaError(ErrorCodes.MODEL, "the run failed"),
             )
         }
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (error: Exception) {
-        TurnResult(
-            answer = "The run failed.",
-            error = HopaError(ErrorCodes.MODEL, "the run failed"),
-        )
     }
 
     /** Sends the outcome; true when it was an error frame. */
@@ -241,31 +265,55 @@ class RemoteTaskRunner(
         }
         val failure = result.error
         if (failure != null) {
-            val budget = failure.code == ErrorCodes.TIMEOUT || failure.code == "E_BUDGET"
-            val code = if (budget) "E_BUDGET" else "E_MODEL"
+            val (code, retryable) = failureFor(failure.code)
             val message = result.answer.ifBlank { failure.message }.take(200)
-            live.send(BackendReplies.error(task, device, code, message, code == "E_MODEL"))
+            live.send(BackendReplies.error(task, device, code, message, retryable))
+            return true
+        }
+        // A refused approval leaves the loop running with no error, so the
+        // records are the only evidence that a step was not done.
+        if (result.records.any { it.approved == false }) {
+            live.send(BackendReplies.error(task, device, "E_POLICY", APPROVAL_REFUSED, false))
             return true
         }
         live.send(BackendReplies.result(task, device, result.answer))
         return false
     }
 
+    /** The contract's code and retryability for a failure the loop returned. */
+    private fun failureFor(code: String): Pair<String, Boolean> = when (code) {
+        ErrorCodes.MODEL -> "E_MODEL" to true
+        ErrorCodes.DEVICE -> "E_DEVICE" to true
+        ErrorCodes.TIMEOUT -> "E_TIMEOUT" to true
+        ErrorCodes.SCHEMA -> "E_SCHEMA" to false
+        ErrorCodes.BLOCKED -> "E_BLOCKED" to false
+        ErrorCodes.POLICY -> "E_POLICY" to false
+        "E_ACTION" -> "E_ACTION" to false
+        "E_CAPABILITY" -> "E_CAPABILITY" to false
+        "E_BUDGET" -> "E_BUDGET" to false
+        ErrorCodes.REFUSED -> "E_POLICY" to false
+        ErrorCodes.UNSUPPORTED -> "E_CAPABILITY" to false
+        else -> "E_AGENT" to false
+    }
+
     private companion object {
-        /** The whole run, including the turn, is capped at this many millis. */
+        /**
+         * Resolve plus run share this deadline, keeping the whole attempt inside
+         * the 180 s short-service cap with room to send the reply.
+         */
         const val DEFAULT_TIMEOUT_MS = 170_000L
 
         /**
          * How long resolving the surface may take. The `auto` path starts the
          * hidden helper and reconnects before the screen is even reached, so a
-         * cold helper needs room; 25 s covers that while staying far inside the
-         * run budget and keeping a wedged surface from outliving the socket.
+         * cold helper needs room; 25 s covers that while leaving 145 s to run.
          */
         const val DEFAULT_SURFACE_TIMEOUT_MS = 25_000L
 
         const val INVALID = "the task needs an id and a goal"
         const val TIMEOUT = "the run did not finish in time"
         const val SURFACE_TIMEOUT = "the screen did not answer in time; send it again"
+        const val APPROVAL_REFUSED = "a step needed your approval and was refused"
         const val NO_SCREEN =
             "I cannot reach your apps: open Running apps, turn on screen access, " +
                 "start the hidden screen, or pair your computer."

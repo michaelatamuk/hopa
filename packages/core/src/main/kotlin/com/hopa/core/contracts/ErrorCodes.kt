@@ -8,4 +8,5 @@ object ErrorCodes {
     const val UNSUPPORTED = "E_UNSUPPORTED"
     const val TIMEOUT = "E_TIMEOUT"
     const val BLOCKED = "E_BLOCKED"
+    const val POLICY = "E_POLICY"
 }
