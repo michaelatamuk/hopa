@@ -31,6 +31,25 @@ class ProcessedTaskLog(
         true
     }
 
+    /** True when the id was claimed inside the window, without claiming it. */
+    suspend fun seen(taskId: String): Boolean = claims.withLock {
+        val at = now()
+        val claimedAt = load()[taskId] ?: return@withLock false
+        at - claimedAt < ttlMs
+    }
+
+    /**
+     * Forgets a claim so a resend of the same id may run again. A run that
+     * ended in a retryable failure releases its id; the ack-before-refuse path
+     * never claims one in the first place.
+     */
+    suspend fun release(taskId: String) = claims.withLock {
+        val stored = load()
+        if (stored.containsKey(taskId)) {
+            save(stored - taskId)
+        }
+    }
+
     private companion object {
         /** One day, the design's dedupe window. */
         const val DEFAULT_TTL_MS = 86_400_000L

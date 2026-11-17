@@ -23,9 +23,10 @@ import kotlinx.serialization.json.jsonPrimitive
  *
  * Ack comes first, always: even a locked, busy or surfaceless phone has to tell
  * the sender the frame arrived before it says anything else. Dedupe comes next,
- * then one run at a time behind [gate] so two deliveries never fight over the
- * screen. The wake socket is bracketed with [taskStarted]/[taskFinished], so it
- * stays open for the whole run.
+ * then [busy] is claimed for the whole attempt so chat cannot start a second
+ * loop over the same screen. The foreground service and [taskStarted] follow
+ * before the surface is resolved, so the wake socket outlives a slow helper.
+ * [gate] keeps two remote deliveries from running at once.
  */
 class RemoteTaskRunner(
     private val deviceId: () -> String,
@@ -34,7 +35,7 @@ class RemoteTaskRunner(
     private val settings: suspend () -> AppSettings,
     private val surfaces: suspend (AppSettings) -> ScreenSourceDevice,
     private val screen: (AppSettings) -> RemoteScreenState,
-    private val busy: () -> Boolean,
+    private val busy: MutableStateFlow<Boolean>,
     private val cancel: MutableStateFlow<Boolean>,
     private val foreground: () -> Boolean,
     private val startService: () -> Unit,
@@ -60,89 +61,114 @@ class RemoteTaskRunner(
             live.send(BackendReplies.error(task, deviceId(), "E_SCHEMA", INVALID, false))
             return
         }
-        if (!processed.claim(id)) {
+        if (processed.seen(id)) {
             return
         }
-        gate.withLock { execute(live, task, id, goal) }
-    }
-
-    private suspend fun execute(
-        live: BackendLink,
-        task: BackendEnvelope,
-        id: String,
-        goal: String,
-    ) {
-        val current = settings()
-        // Checked before resolving: starting a hidden display for a task that
-        // will be refused would leave it running under this run's feet.
-        if (busy()) {
-            val refusal = RemoteRunPlanner.busyRefusal()
-            live.send(
-                BackendReplies.error(
-                    task,
-                    deviceId(),
-                    refusal.code,
-                    refusal.message,
-                    refusal.retryable,
-                ),
-            )
+        // A chat turn or an earlier delivery holds the phone: answer now instead
+        // of starting a second loop over the same screen.
+        if (!busy.compareAndSet(expect = false, update = true)) {
+            sendRefusal(live, task, RemoteRunPlanner.busyRefusal())
             return
         }
-        val surface = try {
-            surfaces(current)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            live.send(BackendReplies.error(task, deviceId(), "E_DEVICE", NO_SCREEN, true))
-            releaseSurface()
-            return
-        }
-        // The surface is only a candidate until it answers once; that answer is
-        // what names the path in the plan and in the reply.
         try {
-            surface.observe()
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            // The surface refused: sourceName stays "fallback" and the planner
-            // names the setup step the person has to take.
-        }
-        val state = screen(current)
-        val plan = RemoteRunPlanner.plan(
-            surfaceName = surface.sourceName,
-            screenPath = current.screenPath,
-            screenOn = state.screenOn,
-            keyguardLocked = state.keyguardLocked,
-            accessibilityOn = state.accessibilityOn,
-            busy = busy(),
-        )
-        if (plan is RemoteRunPlan.Refuse) {
-            live.send(
-                BackendReplies.error(task, deviceId(), plan.code, plan.message, plan.retryable),
-            )
-            releaseSurface()
-            return
-        }
-
-        taskStarted()
-        try {
+            cancel.value = false
+            // A refused foreground start leaves the run in this coroutine; the
+            // cap below still reports a budget error if it cannot finish.
+            runCatching { startService() }
+            taskStarted()
             // An approval is a dialog on HOPA's own screen; when the app is not
             // visible, the notification is the only way to find it again.
             if (!foreground()) {
                 postApproval()
             }
-            // A refused foreground start leaves the run in this coroutine; the
-            // cap below still reports a budget error if it cannot finish.
-            cancel.value = false
-            runCatching { startService() }
-            live.send(BackendReplies.progress(task, deviceId(), "Reading the screen"))
-            val result = attempt(task, id, goal, surface, current)
-            sendResult(live, task, result)
+            val current = settings()
+            val surface = try {
+                surfaces(current)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                live.send(BackendReplies.error(task, deviceId(), "E_DEVICE", NO_SCREEN, true))
+                return
+            }
+            // The surface is only a candidate until it answers once; that answer
+            // is what names the path in the plan and in the reply.
+            try {
+                surface.observe()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                // The surface refused: sourceName stays "fallback" and the
+                // planner names the setup step the person has to take.
+            }
+            val state = screen(current)
+            val plan = RemoteRunPlanner.plan(
+                surfaceName = surface.sourceName,
+                screenPath = current.screenPath,
+                screenOn = state.screenOn,
+                keyguardLocked = state.keyguardLocked,
+                accessibilityOn = state.accessibilityOn,
+                // This runner already holds the claim, so the planner's own
+                // busy check would only see itself.
+                busy = false,
+            )
+            if (plan is RemoteRunPlan.Refuse) {
+                sendRefusal(live, task, plan)
+                return
+            }
+            gate.withLock {
+                // Claim only an id that actually runs; a refusal must stay
+                // retryable under the id the sender was told to resend.
+                if (!processed.claim(id)) {
+                    return@withLock
+                }
+                val failed = try {
+                    runTurn(live, task, id, goal, surface, current)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    true
+                }
+                if (failed) {
+                    // The sender may resend this id after E_MODEL or E_BUDGET.
+                    processed.release(id)
+                }
+            }
         } finally {
             stopService()
             releaseSurface()
             taskFinished()
+            busy.value = false
         }
+    }
+
+    private suspend fun sendRefusal(
+        live: BackendLink,
+        task: BackendEnvelope,
+        refusal: RemoteRunPlan.Refuse,
+    ) {
+        live.send(
+            BackendReplies.error(
+                task,
+                deviceId(),
+                refusal.code,
+                refusal.message,
+                refusal.retryable,
+            ),
+        )
+    }
+
+    /** Runs the turn and answers; true when the reply was a failure frame. */
+    private suspend fun runTurn(
+        live: BackendLink,
+        task: BackendEnvelope,
+        id: String,
+        goal: String,
+        surface: ScreenSourceDevice,
+        current: AppSettings,
+    ): Boolean {
+        live.send(BackendReplies.progress(task, deviceId(), "Reading the screen"))
+        val result = attempt(task, id, goal, surface, current)
+        return sendResult(live, task, result)
     }
 
     private suspend fun attempt(
@@ -173,15 +199,16 @@ class RemoteTaskRunner(
         )
     }
 
+    /** Sends the outcome; true when it was an error frame. */
     private suspend fun sendResult(
         live: BackendLink,
         task: BackendEnvelope,
         result: TurnResult?,
-    ) {
+    ): Boolean {
         val device = deviceId()
         if (result == null) {
             live.send(BackendReplies.error(task, device, "E_BUDGET", TIMEOUT, false))
-            return
+            return true
         }
         val failure = result.error
         if (failure != null) {
@@ -189,9 +216,10 @@ class RemoteTaskRunner(
             val code = if (budget) "E_BUDGET" else "E_MODEL"
             val message = result.answer.ifBlank { failure.message }.take(200)
             live.send(BackendReplies.error(task, device, code, message, code == "E_MODEL"))
-            return
+            return true
         }
         live.send(BackendReplies.result(task, device, result.answer))
+        return false
     }
 
     private companion object {

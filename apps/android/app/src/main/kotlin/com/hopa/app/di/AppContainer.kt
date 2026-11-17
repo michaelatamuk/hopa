@@ -134,7 +134,7 @@ class AppContainer(context: Context) {
             settings = { settings.settings.first() },
             surfaces = { current -> surfaces(current) },
             screen = { current -> Surfaces.state(this, current) },
-            busy = { busy.value },
+            busy = busy,
             cancel = cancelRequested,
             foreground = { AppVisibility.foreground },
             startService = { startRunService() },

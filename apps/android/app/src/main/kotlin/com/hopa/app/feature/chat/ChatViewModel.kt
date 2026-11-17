@@ -285,6 +285,14 @@ class ChatViewModel(
         appendUser: Boolean = true,
     ) {
         val conversation = _state.value.current ?: return
+        // A task delivered to the other device may hold the phone. Two loops on
+        // one screen would fight over it and cancel each other.
+        if (!container.busy.compareAndSet(expect = false, update = true)) {
+            _state.update {
+                it.copy(error = "HOPA is busy with a task from your other device")
+            }
+            return
+        }
         val body = text.ifBlank { attachment?.let(AttachmentRules::describe).orEmpty() }
         if (planApprovedFor.isNotEmpty() && planApprovedFor != body) {
             planApprovedFor = ""
@@ -301,7 +309,6 @@ class ChatViewModel(
         }
         container.pendingAttachment.value = null
         container.pendingNotice.value = null
-        container.busy.value = true
         container.cancelRequested.value = false
         startRunService()
         viewModelScope.launch {
