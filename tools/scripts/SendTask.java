@@ -206,7 +206,12 @@ public final class SendTask {
             if (task.isBlank()) {
                 throw new IllegalArgumentException("the ack carried no task id");
             }
-            System.out.println("ack task=" + task + " state=" + text(ackBody, "state"));
+            // The ack's trace is the one to look up when the terminal frame
+            // never arrives (a woken phone that cannot run, a lost socket).
+            System.out.println(
+                "ack task=" + task
+                    + " trace=" + text(ack, "trace")
+                    + " state=" + text(ackBody, "state"));
 
             Map<String, Object> terminal = link.awaitTask(task, resultTimeout);
             Map<String, Object> terminalBody = object(terminal.get("body"));
