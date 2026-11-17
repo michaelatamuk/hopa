@@ -18,6 +18,8 @@ internal object SessionFixtures {
     fun session(
         settings: SettingsRepository,
         pairing: (String) -> BackendPairing = { BackendPairing(it) },
+        backgroundGraceMs: Long = 30_000L,
+        wakeIdleMs: Long = 45_000L,
         linkFactory: (
             BackendCredentials,
             String,
@@ -33,6 +35,8 @@ internal object SessionFixtures {
         linkFactory = linkFactory,
         deviceName = "Xiaomi",
         appVersion = "0.1.0",
+        backgroundGraceMs = backgroundGraceMs,
+        wakeIdleMs = wakeIdleMs,
     )
 
     fun pairingServer(vararg responses: MockResponse): MockWebServer =
@@ -51,15 +55,20 @@ internal object SessionFixtures {
         val credentials: BackendCredentials,
         val pushToken: () -> String?,
         val refresh: suspend () -> BackendCredentials?,
+        private val queued: Int = 0,
     ) : BackendLink {
         override val state = MutableStateFlow<BackendState>(BackendState.Disconnected)
         override var onTask: (suspend (BackendEnvelope) -> Unit)? = null
+
+        @Volatile
         var started = false
+
+        @Volatile
         var stopped = false
 
         override fun start(scope: CoroutineScope) {
             started = true
-            state.value = BackendState.Live(credentials.deviceId, queued = 0, peers = emptyList())
+            state.value = BackendState.Live(credentials.deviceId, queued = queued, peers = emptyList())
         }
 
         override suspend fun stop() {

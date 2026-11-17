@@ -7,6 +7,7 @@ import com.hopa.capabilities.backend.BackendPairing
 import com.hopa.capabilities.backend.BackendState
 import com.hopa.capabilities.backend.PairingLink
 import com.hopa.data.settings.SettingsRepository
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +43,8 @@ class BackendSession(
     ) -> BackendLink,
     private val deviceName: String,
     private val appVersion: String,
+    private val backgroundGraceMs: Long = BACKGROUND_GRACE_MS,
+    private val wakeIdleMs: Long = WAKE_IDLE_MS,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val gate = Mutex()
@@ -65,8 +68,9 @@ class BackendSession(
     private var foreground = false
     @Volatile
     private var waking = false
-    @Volatile
-    private var runs = 0
+
+    /** Deliveries run on their own coroutines, so the count must not be lost. */
+    private val runs = AtomicInteger()
 
     @Volatile
     private var knownDeviceId = ""
@@ -116,7 +120,7 @@ class BackendSession(
     /** The activity left: close after 30 s unless a run is still in flight. */
     fun onBackground() {
         foreground = false
-        if (runs > 0) {
+        if (runs.get() > 0) {
             return
         }
         if (waking) {
@@ -143,7 +147,8 @@ class BackendSession(
         if (!foreground) {
             waking = true
             scope.launch { connect() }
-            if (link?.state?.value is BackendState.Live) {
+            val live = link?.state?.value as? BackendState.Live
+            if (live != null && live.queued == 0) {
                 armIdleStop()
             }
         }
@@ -151,16 +156,16 @@ class BackendSession(
 
     /** A run began: the wake window must not close under it. */
     fun taskStarted() {
-        runs += 1
+        runs.incrementAndGet()
         window.cancel()
         _task.value = _task.value.copy(state = "running")
     }
 
     /** A run ended: re-arm whichever stop the current life cycle asks for. */
     fun taskFinished() {
-        runs = (runs - 1).coerceAtLeast(0)
+        val active = runs.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
         _task.value = _task.value.copy(state = "finished")
-        if (runs > 0 || foreground) {
+        if (active > 0 || foreground) {
             return
         }
         if (waking) {
@@ -205,20 +210,23 @@ class BackendSession(
 
     private fun publish(next: BackendState) {
         _state.value = next
-        if (!waking || foreground || runs > 0) {
+        if (!waking || foreground || runs.get() > 0) {
             return
         }
-        if (next is BackendState.Live) {
+        // A hello.ack's queued count is the only queue signal; Live never
+        // re-emits when the queue drains, so a non-empty queue must keep the
+        // wake socket open until taskFinished() arms the clock.
+        if (next is BackendState.Live && next.queued == 0) {
             armIdleStop()
         }
     }
 
     private fun armIdleStop() {
-        window.arm(WAKE_IDLE_MS) { waking && !foreground && runs == 0 }
+        window.arm(wakeIdleMs) { waking && !foreground && runs.get() == 0 }
     }
 
     private fun scheduleStop() {
-        window.arm(BACKGROUND_GRACE_MS) { !foreground && runs == 0 }
+        window.arm(backgroundGraceMs) { !foreground && runs.get() == 0 }
     }
 
     /** Caller holds [gate]. */
