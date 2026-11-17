@@ -101,7 +101,7 @@ class BackendClient(
     }
 
     /** Tells the sender its task arrived. The server relays it under the task. */
-    suspend fun ack(task: BackendEnvelope) {
+    override suspend fun ack(task: BackendEnvelope) {
         send(
             BackendEnvelope(
                 id = UUID.randomUUID().toString(),
@@ -117,7 +117,7 @@ class BackendClient(
     }
 
     /** Application-level liveness check: sends `ping`, waits up to 10 s for `pong`. */
-    suspend fun ping() {
+    override suspend fun ping() {
         send(BackendEnvelope(id = UUID.randomUUID().toString(), type = "ping", ts = System.currentTimeMillis()))
         withTimeout(PING_TIMEOUT_MS) { pongs.receive() }
     }

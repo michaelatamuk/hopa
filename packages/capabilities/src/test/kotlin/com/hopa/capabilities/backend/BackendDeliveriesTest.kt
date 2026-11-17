@@ -56,6 +56,34 @@ class BackendDeliveriesTest {
     }
 
     @Test
+    fun `a caller holding only a BackendLink can ack a delivery`() = runBlocking {
+        val acked = CompletableDeferred<JsonObject>()
+        val server = MockWebServer()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : FakeGateway() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.send(helloAck(id = "a1", queued = 1))
+                webSocket.send(delivery())
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val frame = Json.decodeFromString<JsonObject>(text)
+                if (frame["type"]!!.jsonPrimitive.content == "task.ack") runBlocking { acked.complete(frame) }
+            }
+        }))
+        // The static type is the interface on purpose: Task 7's session and
+        // Task 9's runner hold a BackendLink and must ack without a cast.
+        val link: BackendLink = clientFor(server)
+        link.onTask = { task -> link.ack(task) }
+        link.start(this)
+        val ack = withTimeout(5_000) { acked.await() }
+        assertEquals("task-1", ack["task"]!!.jsonPrimitive.content)
+        assertEquals("dev-9", ack["to"]!!.jsonPrimitive.content)
+        assertEquals(TRACE, ack["trace"]!!.jsonPrimitive.content)
+        link.stop()
+        server.shutdown()
+    }
+
+    @Test
     fun `a frame that is not a task create is never handed to onTask`() = runBlocking {
         val calls = AtomicInteger()
         val server = MockWebServer()

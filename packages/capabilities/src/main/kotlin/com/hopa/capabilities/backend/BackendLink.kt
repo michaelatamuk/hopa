@@ -12,5 +12,13 @@ interface BackendLink {
     var onTask: (suspend (BackendEnvelope) -> Unit)?
     fun start(scope: CoroutineScope)
     suspend fun stop()
+
+    /** Sends any frame, e.g. one built by [BackendReplies]. */
     suspend fun send(frame: BackendEnvelope)
+
+    /** Tells the sender of a delivered task that it arrived. */
+    suspend fun ack(task: BackendEnvelope)
+
+    /** Application-level liveness check: sends `ping`, waits for `pong`. */
+    suspend fun ping()
 }
