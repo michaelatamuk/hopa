@@ -1,6 +1,7 @@
 package com.hopa.app
 
 import android.app.Application
+import com.google.firebase.FirebaseApp
 import com.hopa.app.di.AppContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,11 @@ class HopaApplication : Application() {
         // rather than resurrect a question whose turn is gone.
         scope.launch {
             runCatching { container.pendingApprovals.clearAll() }
+        }
+        // A fresh install has no FCM token until something asks for one, and the
+        // gateway needs it in device.hello before it can wake this phone.
+        if (FirebaseApp.getApps(this).isNotEmpty()) {
+            container.appScope.launch { container.backend.loadPushToken() }
         }
     }
 }

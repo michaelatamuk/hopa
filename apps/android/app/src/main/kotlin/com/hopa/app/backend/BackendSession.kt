@@ -26,8 +26,9 @@ import kotlinx.serialization.json.jsonPrimitive
  * Owns the app's one gateway link: pair once, connect while open, close 30 s
  * after HOPA leaves, and hold a wake's socket until its queue drains or the run
  * ends. One [BackendLink] exists at a time across foreground [onForeground], a
- * wake and a refresh: two sockets could rotate the same token family. No token
- * is ever logged.
+ * wake and a refresh: two sockets could rotate the same token family. The push
+ * token is asked for on start too, because a fresh install has none until
+ * something requests one. No token is ever logged.
  */
 class BackendSession(
     private val settings: SettingsRepository,
@@ -41,6 +42,7 @@ class BackendSession(
     ) -> BackendLink,
     private val deviceName: String,
     private val appVersion: String,
+    private val pushTokenFetch: suspend () -> Boolean = { false },
     private val backgroundGraceMs: Long = BACKGROUND_GRACE_MS,
     private val wakeIdleMs: Long = WAKE_IDLE_MS,
 ) {
@@ -114,7 +116,24 @@ class BackendSession(
         foreground = true
         waking = false
         window.cancel()
+        // Process death drops the in-memory token, so a cold start asks FCM
+        // again while the link opens.
+        scope.launch { loadPushToken() }
         scope.launch { connect() }
+    }
+
+    /**
+     * Asks FCM for the registration token when none is held, so the next hello
+     * carries it. A fresh install has no token until someone asks; a live link
+     * says hello again once it lands, and otherwise the next connect reads it.
+     */
+    suspend fun loadPushToken() {
+        if (FirebaseToken.current() != null || !pushTokenFetch()) {
+            return
+        }
+        if (link?.state?.value is BackendState.Live) {
+            reconnect()
+        }
     }
 
     /** The activity left: close after 30 s unless a run is still in flight. */

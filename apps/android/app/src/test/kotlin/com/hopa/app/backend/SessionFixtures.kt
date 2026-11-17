@@ -18,6 +18,7 @@ internal object SessionFixtures {
     fun session(
         settings: SettingsRepository,
         pairing: (String) -> BackendPairing = { BackendPairing(it) },
+        pushTokenFetch: suspend () -> Boolean = { false },
         backgroundGraceMs: Long = 30_000L,
         wakeIdleMs: Long = 45_000L,
         linkFactory: (
@@ -35,6 +36,7 @@ internal object SessionFixtures {
         linkFactory = linkFactory,
         deviceName = "Xiaomi",
         appVersion = "0.1.0",
+        pushTokenFetch = pushTokenFetch,
         backgroundGraceMs = backgroundGraceMs,
         wakeIdleMs = wakeIdleMs,
     )

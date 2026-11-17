@@ -3,9 +3,11 @@ package com.hopa.app.di
 import android.content.Context
 import android.os.Build
 import androidx.core.content.ContextCompat
+import com.google.firebase.FirebaseApp
 import com.hopa.app.BuildConfig
 import com.hopa.app.backend.BackendSession
 import com.hopa.app.backend.ProcessedTaskStore
+import com.hopa.app.backend.PushTokenFetch
 import com.hopa.app.backend.RemoteRunRequest
 import com.hopa.app.backend.RemoteTaskRunner
 import com.hopa.app.model.SettingsModelPort
@@ -112,6 +114,11 @@ class AppContainer(context: Context) {
             },
             deviceName = Build.MODEL,
             appVersion = BuildConfig.VERSION_NAME,
+            // Without google-services.json Firebase is never initialized, so
+            // there is nothing to ask and no token to wait for.
+            pushTokenFetch = {
+                FirebaseApp.getApps(context).isNotEmpty() && PushTokenFetch.load()
+            },
         )
     }
 
