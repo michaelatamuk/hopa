@@ -2,12 +2,15 @@ package com.hopa.app.backend
 
 import com.hopa.capabilities.backend.BackendCredentials
 import com.hopa.capabilities.backend.BackendPairing
+import com.hopa.capabilities.backend.BackendPairingFailure
 import com.hopa.capabilities.backend.PairingLink
 import com.hopa.capabilities.backend.X25519Keys
 import com.hopa.data.settings.SettingsRepository
 import java.util.Base64
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 
 /**
  * The stored gateway identity: claim a pairing, read what is saved and rotate
@@ -66,21 +69,27 @@ internal class BackendIdentity(
         if (current.backendUrl.isBlank()) {
             return null
         }
-        val refreshed = try {
-            pairingFactory(current.backendUrl).refresh(saved)
+        // The gateway rotates the pair when it answers. A stop or reconnect in
+        // this window must not cancel the persist: the rotated refresh token is
+        // the only copy, and presenting the old one again revokes the family.
+        return try {
+            withContext(NonCancellable) {
+                val refreshed = pairingFactory(current.backendUrl).refresh(saved)
+                val merged = refreshed.copy(
+                    deviceId = refreshed.deviceId.ifBlank { current.backendDeviceId },
+                    householdId = refreshed.householdId.ifBlank { current.backendHouseholdId },
+                    gatewayUrl = current.backendUrl,
+                )
+                settings.setBackendAccessToken(merged.accessToken)
+                settings.setBackendRefreshToken(merged.refreshToken)
+                merged
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (error: Exception) {
-            return null
+        } catch (refused: BackendPairingFailure.Refused) {
+            // The token itself was refused: only pairing again can help.
+            null
         }
-        val merged = refreshed.copy(
-            deviceId = refreshed.deviceId.ifBlank { current.backendDeviceId },
-            householdId = refreshed.householdId.ifBlank { current.backendHouseholdId },
-            gatewayUrl = current.backendUrl,
-        )
-        settings.setBackendAccessToken(merged.accessToken)
-        settings.setBackendRefreshToken(merged.refreshToken)
-        return merged
     }
 
     private suspend fun persist(credentials: BackendCredentials, privateKey: String) {

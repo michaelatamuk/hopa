@@ -184,5 +184,29 @@ class BackendSessionTest {
             server.shutdown()
         }
     }
+    @Test
+    fun `disconnect waits for a run before it closes the link`() = runBlocking {
+        val settings = FakeSettings().paired("wss://x/v1/gateway")
+        val created = CompletableDeferred<FakeLink>()
+        val session = session(settings, linkFactory = { credentials, _, _, pushToken, refresh ->
+            FakeLink(credentials, pushToken, refresh).also { created.complete(it) }
+        })
+        try {
+            session.onForeground()
+            val link = withTimeout(2_000) { created.await() }
+            session.taskStarted()
+
+            session.disconnect()
+            delay(100)
+
+            assertFalse(link.stopped)
+
+            session.taskFinished()
+            withTimeout(2_000) { while (!link.stopped) delay(20) }
+            assertTrue(link.stopped)
+        } finally {
+            session.disconnect()
+        }
+    }
 
 }

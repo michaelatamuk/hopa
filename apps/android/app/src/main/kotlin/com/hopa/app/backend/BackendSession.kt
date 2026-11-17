@@ -70,6 +70,8 @@ class BackendSession(
     private var foreground = false
     @Volatile
     private var waking = false
+    @Volatile
+    private var disconnectPending = false
 
     /** Deliveries run on their own coroutines, so the count must not be lost. */
     private val runs = AtomicInteger()
@@ -153,6 +155,12 @@ class BackendSession(
     suspend fun disconnect() {
         waking = false
         window.cancel()
+        // A run in flight owns the socket and its claim. Closing here would
+        // strand the claim and lose the terminal frame, so wait for taskFinished.
+        if (runs.get() > 0) {
+            disconnectPending = true
+            return
+        }
         gate.withLock { closeLink() }
     }
 
@@ -186,6 +194,11 @@ class BackendSession(
     fun taskFinished() {
         val active = runs.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
         _task.value = _task.value.copy(state = "finished")
+        if (active == 0 && disconnectPending) {
+            disconnectPending = false
+            scope.launch { disconnect() }
+            return
+        }
         // A token from the run is applied now only when visible; otherwise the
         // next connect carries it.
         if (refresh.onRunFinished(foreground) || active > 0 || foreground) {

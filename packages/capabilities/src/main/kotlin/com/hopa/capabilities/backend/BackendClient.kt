@@ -3,7 +3,6 @@ package com.hopa.capabilities.backend
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -25,21 +24,20 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
 import okhttp3.WebSocket
-import okhttp3.WebSocketListener
 
 /**
  * Holds one `/v1/gateway` WebSocket: bearer token in the handshake header,
  * `device.hello` as the first frame, `Live` once the ack arrives. A frame that
  * cannot be decoded is ignored so a malformed message never costs the socket.
- * A `task.create` is handed to [onTask] on its own coroutine, so a slow handler
- * never stalls the reader; other types never reach it.
+ * A `task.create` is handed to [onTask] on the session's coroutine scope, so a
+ * slow handler neither stalls the reader nor dies when the socket reconnects.
  *
  * A `1008 E_AUTH` close refreshes the credentials once; a null refresh asks for
  * pairing instead of retrying, because a rotated token may never be presented
- * twice. Any other close retries after a 1/2/4/8 s backoff capped at 30 s.
- * Nothing here logs a token or a frame body.
+ * twice. A refresh that is only unreachable keeps the stored tokens and the
+ * loop retries with backoff. Any other close retries after 1/2/4/8 s capped at
+ * 30 s. Nothing here logs a token or a frame body.
  */
 class BackendClient(
     private val credentials: () -> BackendCredentials?,
@@ -48,6 +46,7 @@ class BackendClient(
     private val deviceName: String,
     private val appVersion: String,
     private val http: OkHttpClient = defaultHttp(),
+    private val handshakeTimeoutMs: Long = HELLO_ACK_TIMEOUT_MS,
 ) : BackendLink {
     private val _state = MutableStateFlow<BackendState>(BackendState.Disconnected)
     override val state: StateFlow<BackendState> = _state.asStateFlow()
@@ -56,14 +55,19 @@ class BackendClient(
     override var onTask: (suspend (BackendEnvelope) -> Unit)? = null
 
     private var job: Job? = null
+
+    /** The connection attempt, not the socket field, owns the hello handshake. */
+    @Volatile
+    private var connection: BackendListener? = null
+
+    /** Deliveries outlive one socket: a close must not kill a running task. */
+    @Volatile
+    private var session: CoroutineScope? = null
+
     @Volatile
     private var socket: WebSocket? = null
     @Volatile
     private var deviceId: String = ""
-
-    /** Where delivered tasks run, one coroutine each, so the reader moves on. */
-    @Volatile
-    private var deliveries: CoroutineScope? = null
 
     /** One token per `pong`, buffered so a fast answer is never lost. */
     @Volatile
@@ -71,9 +75,13 @@ class BackendClient(
 
     override fun start(scope: CoroutineScope) {
         job?.cancel()
+        session?.cancel()
+        connection?.deactivate()
         socket?.close(1000, "restarting")
         socket = null
-        job = scope.launch {
+        val live = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+        session = live
+        job = live.launch {
             var current = credentials() ?: run {
                 _state.value = BackendState.Failed("the phone is not paired", needsPairing = true)
                 return@launch
@@ -83,12 +91,11 @@ class BackendClient(
                 deviceId = current.deviceId
                 _state.value = BackendState.Connecting
                 pongs = Channel(Channel.CONFLATED)
-                val closed = CompletableDeferred<Closed>()
-                val handlers = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
-                deliveries = handlers
-                socket = http.newWebSocket(helloRequest(current), listener(closed))
-                val close = closed.await()
-                handlers.cancel()
+                val conn = listener(live)
+                connection = conn
+                socket = http.newWebSocket(helloRequest(current), conn)
+                val close = conn.closed.await()
+                conn.deactivate()
                 if (!isActive) return@launch
                 val wasLive = _state.value is BackendState.Live
                 _state.value = BackendState.Failed(close.message, needsPairing = false)
@@ -110,10 +117,12 @@ class BackendClient(
     override suspend fun stop() {
         job?.cancel()
         job = null
+        connection?.deactivate()
+        connection = null
         socket?.close(1000, "bye")
         socket = null
-        deliveries?.cancel()
-        deliveries = null
+        session?.cancel()
+        session = null
         _state.value = BackendState.Disconnected
     }
 
@@ -136,6 +145,7 @@ class BackendClient(
         withTimeout(PING_TIMEOUT_MS) { pongs.receive() }
     }
 
+    /** Replies use the socket that is open now, not the one the task arrived on. */
     override suspend fun send(frame: BackendEnvelope) {
         val open = socket ?: throw IllegalStateException("the gateway link is not open")
         check(open.send(BackendCodec.encode(frame))) { "the gateway link closed before the frame was sent" }
@@ -144,57 +154,40 @@ class BackendClient(
     private fun helloRequest(current: BackendCredentials): Request = Request.Builder()
         .url(current.gatewayUrl).header("Authorization", "Bearer ${current.accessToken}").build()
 
-    private fun listener(closed: CompletableDeferred<Closed>) = object : WebSocketListener() {
-        override fun onOpen(webSocket: WebSocket, response: Response) {
-            if (socket !== webSocket) return
-            webSocket.send(BackendCodec.encode(BackendCodec.hello(deviceName, appVersion, pushToken())))
+    private fun listener(scope: CoroutineScope): BackendListener = BackendListener(
+        deviceName = deviceName,
+        appVersion = appVersion,
+        pushToken = pushToken,
+        session = scope,
+        handshakeTimeoutMs = handshakeTimeoutMs,
+        onFrame = ::handleFrame,
+    )
+
+    private fun handleFrame(frame: BackendEnvelope, webSocket: WebSocket) {
+        when (frame.type) {
+            "device.hello.ack" -> _state.value = BackendState.Live(
+                deviceId = frame.to?.takeIf { it.isNotBlank() } ?: deviceId,
+                queued = frame.body["queued"]?.jsonPrimitive?.intOrNull ?: 0,
+                peers = peersOf(frame),
+            )
+            "pong" -> pongs.trySend(Unit)
+            "ping" -> answerPing(webSocket, frame)
+            "task.create" -> dispatch(frame)
         }
-
-        override fun onMessage(webSocket: WebSocket, text: String) {
-            if (socket !== webSocket) return
-            val frame = BackendCodec.decodeOrNull(text) ?: return
-            try {
-                when (frame.type) {
-                    "device.hello.ack" -> _state.value = BackendState.Live(
-                        deviceId = frame.to?.takeIf { it.isNotBlank() } ?: deviceId,
-                        queued = frame.body["queued"]?.jsonPrimitive?.intOrNull ?: 0,
-                        peers = peersOf(frame),
-                    )
-                    "pong" -> pongs.trySend(Unit)
-                    "ping" -> answerPing(webSocket, frame)
-                    "task.create" -> dispatch(frame)
-                }
-            } catch (error: Exception) {
-                // A frame we cannot read is ignored; the socket stays open.
-            }
-        }
-
-        // `onClosing` is the first event of a server close and already carries
-        // its code; `onClosed` may wait forever on a peer's close handshake.
-        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) =
-            finished(webSocket, Closed(code, reason, "the gateway closed the link"))
-
-        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) =
-            finished(webSocket, Closed(code, reason, "the gateway closed the link"))
-
-        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) =
-            finished(webSocket, Closed(0, "", "the gateway is unreachable"))
-
-        private fun finished(webSocket: WebSocket, close: Closed) {
-            if (socket === webSocket) socket = null
-            closed.complete(close)
-        }
-    }
-
-    /** Why a socket ended; only a `1008 E_AUTH` close earns a refresh. */
-    private class Closed(val code: Int, val reason: String, val message: String) {
-        val auth get() = code == AUTH_CLOSE && reason == AUTH_REASON
     }
 
     /** A refresh that throws counts as no refresh: retrying a rotated token is worse. */
     private suspend fun refreshed(): BackendCredentials? = try {
         refresh()
-    } catch (cancelled: CancellationException) { throw cancelled } catch (error: Exception) { null }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (unreachable: BackendPairingFailure.Unavailable) {
+        // The token was not refused, only the network failed: keep the stored
+        // pair and let the loop try again after the backoff.
+        credentials()
+    } catch (error: Exception) {
+        null
+    }
 
     private fun peersOf(frame: BackendEnvelope): List<String> =
         (frame.body["peers"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.orEmpty()
@@ -212,13 +205,13 @@ class BackendClient(
     }
 
     /**
-     * Runs the handler off the reader thread; a handler that fails or is
-     * cancelled is the handler's problem, not the socket's.
+     * Runs the handler on the session's scope, so a reconnect does not cancel a
+     * task that already started. A failed handler is the handler's problem.
      */
     private fun dispatch(frame: BackendEnvelope) {
         val handler = onTask ?: return
-        val scope = deliveries ?: return
-        scope.launch {
+        val live = session ?: return
+        live.launch {
             try {
                 handler(frame)
             } catch (cancelled: CancellationException) {
@@ -232,9 +225,10 @@ class BackendClient(
     companion object {
         /** The contract's liveness answer is local; 10 s is generous. */
         private const val PING_TIMEOUT_MS = 10_000L
-        private const val AUTH_CLOSE = 1008
-        private const val AUTH_REASON = "E_AUTH"
         private const val MAX_BACKOFF_MS = 30_000L
+
+        /** A peer that never acks the hello is dropped so the loop reconnects. */
+        const val HELLO_ACK_TIMEOUT_MS = 15_000L
 
         /** 1/2/4/8 s doubling, capped at 30 s. */
         internal fun backoffMs(attempt: Int): Long =

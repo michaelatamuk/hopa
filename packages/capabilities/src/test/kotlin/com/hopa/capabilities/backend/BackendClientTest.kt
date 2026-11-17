@@ -1,6 +1,7 @@
 package com.hopa.capabilities.backend
 
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -119,6 +120,31 @@ class BackendClientTest {
         server.shutdown()
     }
 
+    @Test
+    fun `a gateway that never acks the hello is closed and retried`() = runBlocking {
+        val server = MockWebServer()
+        val opened = AtomicInteger()
+        // The first connection stays silent. The second one acks, so reaching
+        // Live proves the timeout closed the first socket and the loop retried.
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : FakeGateway() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                opened.incrementAndGet()
+            }
+        }))
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : FakeGateway() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                webSocket.send(helloAck())
+            }
+        }))
+        val client = clientFor(server, handshakeTimeoutMs = 100)
+        client.start(this)
+        withTimeout(5_000) { client.state.first { it is BackendState.Live } }
+        assertEquals(1, opened.get())
+        assertTrue(server.requestCount >= 2)
+        client.stop()
+        server.shutdown()
+    }
+
     private open class FakeGateway : WebSocketListener() {
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
             webSocket.close(1000, null)
@@ -128,6 +154,7 @@ class BackendClientTest {
     private fun clientFor(
         server: MockWebServer,
         refresh: suspend () -> BackendCredentials? = { null },
+        handshakeTimeoutMs: Long = BackendClient.HELLO_ACK_TIMEOUT_MS,
     ): BackendClient = BackendClient(
         credentials = { credentials(server) },
         pushToken = { "tok" },
@@ -135,6 +162,7 @@ class BackendClientTest {
         deviceName = "Xiaomi 15T Pro",
         appVersion = "0.1.0",
         http = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build(),
+        handshakeTimeoutMs = handshakeTimeoutMs,
     )
 
     private fun credentials(server: MockWebServer): BackendCredentials = BackendCredentials(

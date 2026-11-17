@@ -211,6 +211,53 @@ class BackendDeliveriesTest {
         assertTrue(error.body["retryable"]!!.jsonPrimitive.content.toBoolean())
     }
 
+    @Test
+    fun `a close during a run keeps the handler and replies on the new socket`() = runBlocking {
+        val started = CompletableDeferred<Unit>()
+        val reconnected = CompletableDeferred<Unit>()
+        val released = CompletableDeferred<Unit>()
+        val acked = CompletableDeferred<JsonObject>()
+        val server = MockWebServer()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : FakeGateway() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.send(helloAck(id = "a1", queued = 1))
+                webSocket.send(delivery())
+                Thread {
+                    Thread.sleep(200)
+                    webSocket.close(1000, "bye")
+                }.start()
+            }
+        }))
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : FakeGateway() {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                webSocket.send(helloAck(id = "a2", queued = 0))
+                reconnected.complete(Unit)
+            }
+
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val frame = Json.decodeFromString<JsonObject>(text)
+                if (frame["type"]!!.jsonPrimitive.content == "task.ack") acked.complete(frame)
+            }
+        }))
+        val client = clientFor(server)
+        client.onTask = { task ->
+            started.complete(Unit)
+            // Hold the task across the close; only the explicit gate below
+            // lets it answer, and by then the first socket is gone.
+            released.await()
+            client.ack(task)
+        }
+        client.start(this)
+        withTimeout(5_000) { started.await() }
+        withTimeout(5_000) { reconnected.await() }
+        withTimeout(5_000) { client.state.first { it is BackendState.Live } }
+        released.complete(Unit)
+        val ack = withTimeout(5_000) { acked.await() }
+        assertEquals("task-1", ack["task"]!!.jsonPrimitive.content)
+        client.stop()
+        server.shutdown()
+    }
+
     private open class FakeGateway : WebSocketListener() {
         override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
             webSocket.close(1000, null)
@@ -220,6 +267,7 @@ class BackendDeliveriesTest {
     private fun clientFor(
         server: MockWebServer,
         refresh: suspend () -> BackendCredentials? = { null },
+        handshakeTimeoutMs: Long = BackendClient.HELLO_ACK_TIMEOUT_MS,
     ): BackendClient = BackendClient(
         credentials = { credentials(server) },
         pushToken = { "tok" },
@@ -227,6 +275,7 @@ class BackendDeliveriesTest {
         deviceName = "Xiaomi 15T Pro",
         appVersion = "0.1.0",
         http = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build(),
+        handshakeTimeoutMs = handshakeTimeoutMs,
     )
 
     private fun credentials(server: MockWebServer): BackendCredentials = BackendCredentials(

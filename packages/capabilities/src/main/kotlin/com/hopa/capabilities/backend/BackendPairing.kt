@@ -87,14 +87,19 @@ class BackendPairing(
             val response = try {
                 client.newCall(request).execute()
             } catch (error: IOException) {
-                throw IllegalStateException(
+                throw BackendPairingFailure.Unavailable(
                     scrub("backend unreachable: ${error.message.orEmpty()}", secrets),
                 )
             }
             response.use {
                 val text = it.body?.string().orEmpty()
                 if (!it.isSuccessful) {
-                    throw IllegalStateException(scrub(refusal(it.code, text), secrets))
+                    val message = scrub(refusal(it.code, text), secrets)
+                    throw if (it.code in 400..499) {
+                        BackendPairingFailure.Refused(it.code, message)
+                    } else {
+                        BackendPairingFailure.Unavailable(message)
+                    }
                 }
                 parse(text)
             }
