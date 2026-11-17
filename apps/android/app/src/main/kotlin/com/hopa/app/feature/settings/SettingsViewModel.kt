@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.FirebaseApp
 import com.hopa.app.backend.FirebaseToken
+import com.hopa.app.backend.ScreenAccess
 import com.hopa.app.di.AppContainer
 import com.hopa.capabilities.accessibility.AccessibilityState
 import com.hopa.capabilities.accessibility.HopaAccessibilityService
@@ -509,6 +510,21 @@ class SettingsViewModel(
         viewModelScope.launch { reload() }
     }
 
+    /**
+     * Android binds the accessibility service a moment after the app resumes.
+     * The pill reads this snapshot, so it is refreshed on resume and polled
+     * instead of staying at the value from when the screen first opened.
+     */
+    fun refreshScreenAccess() {
+        val current = _state.value.settings
+        val available = ScreenAccess.available(
+            allowed = current.accessibilityAllowed,
+            enabled = AccessibilityState.isEnabled(container.context),
+            bound = HopaAccessibilityService.instance != null,
+        )
+        _state.update { it.copy(phoneAccess = available) }
+    }
+
     fun testBridge(url: String, token: String) {
         viewModelScope.launch {
             if (url.isBlank()) {
@@ -549,8 +565,11 @@ class SettingsViewModel(
                 backendToken = FirebaseToken.current(),
                 fcmAvailable = FirebaseApp.getApps(container.context).isNotEmpty(),
                 providerState = resolver.resolve(settings.provider, settings.endpoint, key),
-                phoneAccess = AccessibilityState.isEnabled(container.context) &&
-                    HopaAccessibilityService.instance != null,
+                phoneAccess = ScreenAccess.available(
+                    allowed = settings.accessibilityAllowed,
+                    enabled = AccessibilityState.isEnabled(container.context),
+                    bound = HopaAccessibilityService.instance != null,
+                ),
                 error = if (keySaved && key.isBlank()) {
                     "The saved key cannot be read on this phone; paste it again"
                 } else {

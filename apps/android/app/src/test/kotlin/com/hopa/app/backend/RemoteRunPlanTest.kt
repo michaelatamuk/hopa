@@ -53,6 +53,7 @@ class RemoteRunPlanTest {
             false,
             true,
             busy = true,
+            accessibilityBound = true,
         )
         assertEquals("E_DEVICE", (plan as RemoteRunPlan.Refuse).code)
     }
