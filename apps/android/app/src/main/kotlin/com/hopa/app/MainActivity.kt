@@ -13,6 +13,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import com.hopa.app.di.AppContainer
+import com.hopa.app.feature.settings.PairInput
 import com.hopa.app.service.ScreenCaptureRequester
 import com.hopa.app.service.ScreenCaptureService
 import com.hopa.capabilities.bridge.BridgeClient
@@ -132,9 +133,29 @@ class MainActivity : ComponentActivity() {
     /**
      * Automation hooks for E2E: `--es hopa.bridgeUrl ...` (plus an optional
      * token or pair code) configures the bridge without tapping the settings
-     * form. Nothing happens when the extras are absent.
+     * form. `hopa.backendUrl` / `hopa.backendPair` pair the gateway the same
+     * way. Nothing happens when the extras are absent.
      */
     private fun applyLaunchConfig(intent: Intent, container: AppContainer) {
+        // The gateway is handled before the bridge's early return: a device
+        // test may pair the backend while leaving the PC bridge untouched.
+        val backendUrl = intent.getStringExtra(EXTRA_BACKEND_URL)
+        val backendPair = intent.getStringExtra(EXTRA_BACKEND_PAIR)
+        val backendName = intent.getStringExtra(EXTRA_BACKEND_NAME)
+        if (!backendName.isNullOrBlank()) {
+            com.hopa.app.backend.BackendLaunchName.value = backendName.trim()
+        }
+        if (!backendUrl.isNullOrBlank() || !backendPair.isNullOrBlank()) {
+            lifecycleScope.launch {
+                val fallback = backendUrl?.trim().orEmpty()
+                val link = PairInput.normalise(backendPair.orEmpty(), fallback)
+                if (link != null) {
+                    container.backend.pair(link)
+                } else if (fallback.isNotBlank()) {
+                    container.settings.update { it.copy(backendUrl = fallback) }
+                }
+            }
+        }
         val url = intent.getStringExtra(EXTRA_BRIDGE_URL)
         if (url.isNullOrBlank()) {
             return
@@ -160,5 +181,8 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_BRIDGE_URL = "hopa.bridgeUrl"
         const val EXTRA_BRIDGE_TOKEN = "hopa.bridgeToken"
         const val EXTRA_BRIDGE_PAIR = "hopa.bridgePair"
+        const val EXTRA_BACKEND_URL = "hopa.backendUrl"
+        const val EXTRA_BACKEND_PAIR = "hopa.backendPair"
+        const val EXTRA_BACKEND_NAME = "hopa.backendName"
     }
 }

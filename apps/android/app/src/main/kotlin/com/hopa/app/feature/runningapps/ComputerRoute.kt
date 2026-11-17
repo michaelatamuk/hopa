@@ -23,5 +23,8 @@ fun ComputerRoute(
         onSave = viewModel::save,
         onTestBridge = viewModel::testBridge,
         onPairBridge = viewModel::pairBridge,
+        onPairBackend = viewModel::pair,
+        onDisconnectBackend = viewModel::disconnectBackend,
+        onRefreshBackend = viewModel::refresh,
     )
 }

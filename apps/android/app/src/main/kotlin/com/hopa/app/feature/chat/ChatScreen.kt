@@ -64,7 +64,6 @@ import com.hopa.app.feature.chat.component.Composer
 import com.hopa.app.feature.chat.component.MessageBubble
 import com.hopa.app.feature.chat.component.PendingAttachmentRow
 import com.hopa.app.feature.chat.component.ThinkingIndicator
-import com.hopa.app.ui.component.ApprovalSheet
 import com.hopa.app.ui.component.HopaBottomBar
 import com.hopa.app.ui.component.HopaBottomBarEasy
 import com.hopa.app.ui.component.HopaMascot
@@ -84,7 +83,6 @@ fun ChatScreen(
     onSend: () -> Unit,
     onOption: (String) -> Unit,
     onQuick: (String) -> Unit,
-    onApprove: (Boolean) -> Unit,
     onNewChat: () -> Unit,
     onOpenConversations: () -> Unit,
     onStartVoice: () -> Unit,
@@ -361,13 +359,6 @@ fun ChatScreen(
             }
         },
     ) { padding ->
-        state.pendingApproval?.let { request ->
-            ApprovalSheet(
-                request = request,
-                onDeny = { onApprove(false) },
-                onAllow = { onApprove(true) },
-            )
-        }
         Column(
             modifier = Modifier
                 .fillMaxSize()

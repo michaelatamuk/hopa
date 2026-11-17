@@ -2,6 +2,8 @@ package com.hopa.app.feature.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.firebase.FirebaseApp
+import com.hopa.app.backend.FirebaseToken
 import com.hopa.app.di.AppContainer
 import com.hopa.capabilities.accessibility.AccessibilityState
 import com.hopa.capabilities.accessibility.HopaAccessibilityService
@@ -15,6 +17,7 @@ import java.io.IOException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -33,6 +36,24 @@ class SettingsViewModel(
 
     init {
         viewModelScope.launch { reload() }
+        // The gateway link and the last delivered task change while this screen
+        // is open, so the card reads them live instead of on a hidden refresh.
+        viewModelScope.launch {
+            container.backend.state.collect { backend ->
+                _state.update {
+                    it.copy(
+                        backendState = backend,
+                        backendToken = FirebaseToken.current(),
+                        fcmAvailable = FirebaseApp.getApps(container.context).isNotEmpty(),
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            container.backend.task.collect { task ->
+                _state.update { it.copy(backendTask = task) }
+            }
+        }
     }
 
     fun save(
@@ -436,6 +457,49 @@ class SettingsViewModel(
         }
     }
 
+    /**
+     * Pair the gateway. The field takes the whole `hopa://pair…` link or a bare
+     * session next to the address on screen; nothing is guessed when both are
+     * missing.
+     */
+    fun pair(url: String, text: String) {
+        viewModelScope.launch {
+            val link = PairInput.normalise(text, url.trim())
+            if (link == null) {
+                _state.update {
+                    it.copy(backendStatus = "Gateway: paste a pairing link or a session with an address")
+                }
+                return@launch
+            }
+            _state.update { it.copy(busy = true, backendStatus = null) }
+            val message = container.backend.pair(link).fold(
+                onSuccess = { "Gateway paired; this phone can receive tasks" },
+                onFailure = { error ->
+                    "Gateway: ${error.message ?: error::class.simpleName}"
+                },
+            )
+            reload()
+            _state.update { it.copy(busy = false, backendStatus = message) }
+        }
+    }
+
+    /** Close the socket but keep the stored identity, so the next open reconnects. */
+    fun disconnectBackend() {
+        viewModelScope.launch {
+            _state.update { it.copy(busy = true, backendStatus = null) }
+            runCatching { container.backend.disconnect() }
+            reload()
+            _state.update {
+                it.copy(busy = false, backendStatus = "Disconnected; the pairing is kept")
+            }
+        }
+    }
+
+    /** Re-read the saved identity and the FCM registration on demand. */
+    fun refresh() {
+        viewModelScope.launch { reload() }
+    }
+
     fun testBridge(url: String, token: String) {
         viewModelScope.launch {
             if (url.isBlank()) {
@@ -470,6 +534,11 @@ class SettingsViewModel(
                 key = key,
                 keySaved = keySaved,
                 bridgeKey = bridgeKey,
+                backendUrl = settings.backendUrl,
+                backendDeviceId = settings.backendDeviceId,
+                backendName = com.hopa.app.backend.BackendLaunchName.value,
+                backendToken = FirebaseToken.current(),
+                fcmAvailable = FirebaseApp.getApps(container.context).isNotEmpty(),
                 providerState = resolver.resolve(settings.provider, settings.endpoint, key),
                 phoneAccess = AccessibilityState.isEnabled(container.context) &&
                     HopaAccessibilityService.instance != null,

@@ -46,7 +46,6 @@ fun ChatRoute(
         onSend = viewModel::send,
         onOption = viewModel::sendOption,
         onQuick = viewModel::sendQuick,
-        onApprove = viewModel::resolveApproval,
         onNewChat = viewModel::newChat,
         onOpenConversations = { chatsOpen = true },
         onStartVoice = viewModel::startVoice,
