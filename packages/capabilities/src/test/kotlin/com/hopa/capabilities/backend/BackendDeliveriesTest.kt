@@ -161,6 +161,35 @@ class BackendDeliveriesTest {
     }
 
     @Test
+    fun `an inbound ping is answered with a pong under the ping`() = runBlocking {
+        val answered = CompletableDeferred<JsonObject>()
+        val server = MockWebServer()
+        server.enqueue(MockResponse().withWebSocketUpgrade(object : FakeGateway() {
+            override fun onMessage(webSocket: WebSocket, text: String) {
+                val frame = Json.decodeFromString<JsonObject>(text)
+                when (frame["type"]!!.jsonPrimitive.content) {
+                    "device.hello" -> {
+                        webSocket.send(helloAck(id = "a1", queued = 0))
+                        webSocket.send(
+                            """{"v":1,"id":"q1","type":"ping","ts":2,"from":"dev-9","trace":"$TRACE"}""".trimIndent()
+                        )
+                    }
+
+                    "pong" -> runBlocking { answered.complete(frame) }
+                }
+            }
+        }))
+        val client = clientFor(server)
+        client.start(this)
+        val pong = withTimeout(5_000) { answered.await() }
+        assertEquals("pong", pong["type"]!!.jsonPrimitive.content)
+        assertEquals("dev-9", pong["to"]!!.jsonPrimitive.content)
+        assertEquals(TRACE, pong["trace"]!!.jsonPrimitive.content)
+        client.stop()
+        server.shutdown()
+    }
+
+    @Test
     fun `reply builders copy the delivery and name their body`() {
         val progress = BackendReplies.progress(deliveryFrame(), "dev-1", "opening settings")
         assertEquals("task.progress", progress.type)

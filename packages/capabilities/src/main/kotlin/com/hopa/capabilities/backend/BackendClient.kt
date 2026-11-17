@@ -153,6 +153,8 @@ class BackendClient(
 
                     "pong" -> pongs.trySend(Unit)
 
+                    "ping" -> answerPing(webSocket, frame)
+
                     "task.create" -> dispatch(frame)
                 }
             } catch (error: Exception) {
@@ -183,6 +185,25 @@ class BackendClient(
         (frame.body["peers"] as? JsonArray)
             ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
             .orEmpty()
+
+    /**
+     * Answers a heartbeat `ping` on the socket it arrived on, not through
+     * [send]: a concurrent close may already have nulled [socket], and a pong
+     * the reader can still write on that socket is what keeps the phone alive.
+     */
+    private fun answerPing(webSocket: WebSocket, ping: BackendEnvelope) {
+        webSocket.send(
+            BackendCodec.encode(
+                BackendEnvelope(
+                    id = UUID.randomUUID().toString(),
+                    type = "pong",
+                    ts = System.currentTimeMillis(),
+                    trace = ping.trace,
+                    to = ping.from,
+                )
+            )
+        )
+    }
 
     /**
      * Runs the handler off the reader thread. Only `task.create` reaches here,
