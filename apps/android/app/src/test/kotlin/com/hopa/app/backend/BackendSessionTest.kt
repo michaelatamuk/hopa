@@ -6,10 +6,8 @@ import com.hopa.app.backend.SessionFixtures.FakeSettings
 import com.hopa.app.backend.SessionFixtures.gateway
 import com.hopa.app.backend.SessionFixtures.pairingServer
 import com.hopa.app.backend.SessionFixtures.session
-import com.hopa.capabilities.backend.BackendState
 import com.hopa.capabilities.backend.PairingLink
 import java.util.Base64
-import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -145,37 +143,6 @@ class BackendSessionTest {
         } finally {
             session.disconnect()
             scope.cancel()
-        }
-    }
-
-    @Test
-    fun `a new token reopens the live link`() = runBlocking {
-        val settings = FakeSettings().paired("wss://x/v1/gateway")
-        val created = Collections.synchronizedList(mutableListOf<FakeLink>())
-        val session = session(settings, linkFactory = { credentials, _, _, pushToken, refresh ->
-            FakeLink(credentials, pushToken, refresh).also { created += it }
-        })
-        try {
-            FirebaseToken.set("t1")
-            session.onForeground()
-            withTimeout(2_000) { while (created.size < 1) delay(20) }
-            withTimeout(2_000) {
-                while (session.state.value !is BackendState.Live) delay(20)
-            }
-            val first = created[0]
-
-            FirebaseToken.set("t2")
-            session.reconnect()
-            withTimeout(2_000) {
-                while (created.size < 2 || !created[1].started) delay(20)
-            }
-
-            assertTrue(first.stopped)
-            assertEquals("t2", created[1].pushToken())
-            assertTrue(session.state.value is BackendState.Live)
-        } finally {
-            FirebaseToken.set(null)
-            session.disconnect()
         }
     }
 

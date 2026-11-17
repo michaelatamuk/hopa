@@ -23,11 +23,11 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
- * Owns the app's one gateway link: pair once, connect while HOPA is open, close
- * 30 s after it leaves, and keep a wake's socket alive until its queue drains or
- * the run ends. Exactly one [BackendLink] exists at a time, including across a
- * foreground [onForeground], a wake and a refresh: two sockets could rotate the
- * same token family and revoke it. No token is ever logged.
+ * Owns the app's one gateway link: pair once, connect while open, close 30 s
+ * after HOPA leaves, and hold a wake's socket until its queue drains or the run
+ * ends. One [BackendLink] exists at a time across foreground [onForeground], a
+ * wake and a refresh: two sockets could rotate the same token family. No token
+ * is ever logged.
  */
 class BackendSession(
     private val settings: SettingsRepository,
@@ -70,6 +70,9 @@ class BackendSession(
     /** Deliveries run on their own coroutines, so the count must not be lost. */
     private val runs = AtomicInteger()
 
+    private val refresh: LinkRefresh =
+        LinkRefresh(scope, gate, runs::get, { foreground || waking }, ::closeLink, ::connect)
+
     @Volatile
     private var knownDeviceId = ""
     @Volatile
@@ -88,10 +91,7 @@ class BackendSession(
         }
     }
 
-    /**
-     * Claims a pairing session and stores it. The claim happens before any write,
-     * so a refusal leaves the old identity.
-     */
+    /** Claims a pairing session and stores it; a refusal leaves the old identity. */
     suspend fun pair(link: PairingLink): Result<Unit> = try {
         val credentials = identity.claim(link, deviceName, FirebaseToken.current())
         knownDeviceId = credentials.deviceId
@@ -135,11 +135,8 @@ class BackendSession(
         gate.withLock { closeLink() }
     }
 
-    /** A new push token arrived: reopen so the next `device.hello` carries it. */
-    fun reconnect() = scope.launch {
-        gate.withLock { closeLink() }
-        connect()
-    }
+    /** A new push token arrived: refresh the hello when a socket is safe. */
+    fun reconnect() = refresh.request()
 
     /**
      * Opens the link for a wake and arms the idle stop. The caller's scope may be
@@ -168,7 +165,9 @@ class BackendSession(
     fun taskFinished() {
         val active = runs.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
         _task.value = _task.value.copy(state = "finished")
-        if (active > 0 || foreground) {
+        // A token from the run is applied now only when visible; otherwise the
+        // next connect carries it.
+        if (refresh.onRunFinished(foreground) || active > 0 || foreground) {
             return
         }
         if (waking) {
@@ -206,6 +205,7 @@ class BackendSession(
             onTask?.invoke(envelope)
         }
         link = created
+        refresh.onConnected()
         stateJob = scope.launch { created.state.collect { publish(it) } }
         created.start(scope)
         publish(created.state.value)
@@ -216,8 +216,7 @@ class BackendSession(
         if (!waking || foreground || runs.get() > 0) {
             return
         }
-        // A hello.ack's queued count is the only queue signal; Live never
-        // re-emits when the queue drains, so hold it until taskFinished().
+        // Queued is the only signal; Live does not re-emit, so hold until taskFinished().
         if (next is BackendState.Live && next.queued == 0) {
             armIdleStop()
         }
