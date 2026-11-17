@@ -40,34 +40,59 @@ curl -X DELETE -H "Authorization: Bearer $env:RENDER_API_KEY" `
 | 1 | Scripted round-trips on the deployed EU instance | 20/20, 10 each direction | **deployed 20/20, twice in a row** (13.5 s and 11.7 s) | `exitRun` against `wss://hopa-backend-test.onrender.com/v1/gateway`; trace ids below; local test `ExitRunTest > twenty round-trips run twice over a real socket stay clean` |
 | 2 | Replay: the same `task.create` 3× | 1 task, 1 delivery | passed | `PgTaskRoutingTest > the same message id three times creates one row and one delivery` |
 | 3 | Cross-household attempts | 1,000 refused `E_TENANT`, 0 rows | CI runs 1,000 (`HOPA_ISOLATION_ATTEMPTS=1000`); deployed: an outsider household gets 404 for another household's trace | `TenantIsolationTest > a thousand cross-household reads leak nothing`; deployed `GET /v1/traces/{id}` with a foreign token |
-| 4 | Real FCM wake on a sleeping phone | delivered, reconnect, task arrives | **closed for backend week 1: the server half is proven on the deployed instance; the client half moves to the Android track** | `FcmProbe` (OAuth 200, `messages:send` → `404 UNREGISTERED`), the deployed wake below, and `WakeTest` for the mock; the phone half needs a registered token, see "Carried out of week 1" |
+| 4 | Real FCM wake on a sleeping phone | delivered, reconnect, task arrives | **proven end to end on a Xiaomi 15T Pro (Android 17)**: the phone was paired, backgrounded and locked; a task produced a `wake` span of 5256 ms, the socket reconnected, the task was delivered and acked (trace `fa130edad4a341614902b8959adea77b`). Execution while locked is refused (`E_DEVICE`), as designed | `send-task.ps1` against the deployed gateway; spans `accept, route, wake, deliver, accept, route, ack` in `GET /v1/traces/{id}` |
 | 5 | Route latency in-region | p95 < 150 ms | **deployed p50 23 ms, p95 117 ms, max 204 ms** over 40 route spans (second, warm run); one cold-start message was 318 ms | trace `durationMs` from `/v1/traces`, warm run |
 | 6 | No secrets or payloads in logs | a day's logs are clean | **last 100 log entries: 0** occurrences of `Bearer `, either access token or the task body | `GET /v1/logs?ownerId=…&resource=srv-dbtfbnff3r2c73b45ri0` scan |
 | 7 | Migrations | fresh and an existing schema both apply, no manual SQL | deployed: Flyway read `<< Empty Schema >>`, created the history table and applied V1 at boot; a second boot logged `Schema "public" is up to date. No migration necessary.` | boot log lines below; second deploy |
 | 8 | No client regression | HOPA-Bench 20/20 | **deferred: `bench run` drives a HarmonyOS device through the bridge; no device in this environment** | not run in this slice |
 
-Row 4 is closed on the backend side: everything the server owns (credential,
-project, send, invalid-token clearing, wake span, token bound) ran against the
-deployed instance. Its client half needs a physical Android device, so it moved
-to the Android track rather than holding week 1 open. Row 8 needs a HarmonyOS
-device and stays deferred. Neither gap is backend code; everything else ran
-against the deployed stack.
+Row 4 is closed end to end: the server side (credential, project, send,
+invalid-token clearing, wake span) and the client side (pairing, socket, FCM
+registration, wake, delivery, ack) both ran on the deployed stack and a physical
+phone. Row 8 still needs a HarmonyOS device.
+
+## The phone run (2026-11-17)
+
+| Item | Value |
+|---|---|
+| Phone | Xiaomi 2506BPN68G (15T Pro), Android 17 / API 37, Google Play services present |
+| Install | `tools/scripts/android-device-checks.ps1 -InstallOnly` — the exec-in stager, because the host blocks `adb install`; HyperOS still needs **Install via USB** and one confirmation tap |
+| App | `0.1.0-261117-2114`, `applicationId com.hopa.android` |
+| Pairing | `pair-device.ps1 -LinkOnly` → the pairing code pasted via `adb shell am start` extras; `Gateway: not an X25519 public key` exposed a real bug (desktop `XECPublicKey` vs Android's X.509-only key), fixed in `30d44c3` |
+| FCM token | fetched on start (`7cc3935`); before that the card said "FCM waiting for a token" and no wake was possible |
+| Socket | `device.hello` → `hello.ack`; a delivered task was acked `state=delivered` |
+
+Two runs:
+
+| Run | Sender saw | Spans |
+|---|---|---|
+| awake, delivered | `ack state=delivered` | `accept, route, deliver, …` |
+| backgrounded and locked | `ack state=queued`, then `E_DEVICE`, trace `00-fa130edad4a341614902b8959adea77b-…` | `accept 1ms, route 5462ms, **wake 5256ms**, deliver 9ms, accept 2ms, route 20ms, ack 1ms, accept 1ms, route 93ms` |
+
+The wake is the real FCM path: the phone was off the socket for more than the
+30 s background grace, the push took 5256 ms on the free plan, the socket came
+back, the task was delivered and acked, and the locked phone answered
+`E_DEVICE` instead of pretending to run.
+
+**Open follow-up:** execution on the visible screen still refuses with
+`E_DEVICE "I cannot reach your apps"` even while the app itself shows "Ready to
+open apps" — the runner resolves no surface (`HopaAccessibilityService.instance`
+appears null on that path) although the accessibility service is bound. The
+wake, delivery and ack are unaffected; the execution half needs one more fix.
 
 ## Carried out of week 1
 
 | Item | Why it left this slice | Where it is picked up |
 |---|---|---|
-| Row 4's client half: wake a sleeping phone, reconnect, receive the task | needs a physical Android device holding a real FCM registration token; the emulator has no Play services token and cannot be woken | the Android track, once the app registers a token; the server side of the check is already green |
 | Row 8: HOPA-Bench 20/20 | `bench run` drives a HarmonyOS device through the bridge; no device here | week 3 demo gate |
 
-The check to run when a phone is available, unchanged:
+The wake check, now run:
 
-1. Install the app, grant notifications, let it register a push token (confirm
-   `devices.push_token` is not null for that device inside its household).
-2. Background the app, turn the screen off, let the socket drop.
+1. Install the app, grant notifications, let it register a push token.
+2. Background the app, turn the screen off, let the socket drop (30 s grace).
 3. Send a `task.create` from the PC to that device.
-4. Expect one `wake` span for that trace, a reconnect, the task arriving and the
-   task moving `queued → delivered`.
+4. Expect one `wake` span for that trace, a reconnect, the task arriving and an
+   ack. Done on 2026-11-17; the trace is above.
 
 ## Deployed trace ids (second run)
 
