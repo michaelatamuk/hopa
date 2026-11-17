@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         com.hopa.app.service.AppVisibility.foreground = true
+        (application as HopaApplication).container.backend.onForeground()
         ScreenCaptureRequester.launch = {
             val manager = getSystemService(MediaProjectionManager::class.java)
             runCatching { screenCapture.launch(manager.createScreenCaptureIntent()) }
@@ -41,6 +42,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         com.hopa.app.service.AppVisibility.foreground = false
+        (application as HopaApplication).container.backend.onBackground()
         ScreenCaptureRequester.launch = null
         super.onStop()
     }
