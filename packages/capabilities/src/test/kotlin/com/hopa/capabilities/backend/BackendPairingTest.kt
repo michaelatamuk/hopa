@@ -1,6 +1,7 @@
 package com.hopa.capabilities.backend
 
 import java.security.KeyFactory
+import java.security.PublicKey
 import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Base64
 import kotlinx.coroutines.runBlocking
@@ -9,6 +10,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class BackendPairingTest {
@@ -217,6 +219,33 @@ class BackendPairingTest {
         assertEquals(pair.`private`.encoded.toList(), rebuilt.encoded.toList())
     }
 
+    @Test
+    fun `an android provider key is read from its x509 encoding`() {
+        val raw = ByteArray(32) { it.toByte() }
+        val key = FakePublicKey(X25519_SPKI_PREFIX + raw)
+
+        assertEquals(raw.toList(), X25519Keys.publicKeyBytes(key).toList())
+    }
+
+    @Test
+    fun `a key that is not x25519 is rejected`() {
+        try {
+            X25519Keys.publicKeyBytes(FakePublicKey(ByteArray(X25519_SPKI_PREFIX.size + 32)))
+            fail("expected IllegalArgumentException")
+        } catch (error: IllegalArgumentException) {
+            assertEquals("not an X25519 public key", error.message)
+        }
+    }
+
+    /** Mimics an Android provider key, which is not an [java.security.interfaces.XECPublicKey]. */
+    private class FakePublicKey(private val encoded: ByteArray) : PublicKey {
+        override fun getAlgorithm(): String = "X25519"
+
+        override fun getFormat(): String = "X.509"
+
+        override fun getEncoded(): ByteArray = encoded
+    }
+
     private suspend fun messageOf(block: suspend () -> Unit): String = try {
         block()
         "no error"
@@ -234,4 +263,11 @@ class BackendPairingTest {
      *  `wss` to `https` mapping is pinned by PairingLinksTest. */
     private fun gateway(server: MockWebServer) =
         "ws://${server.hostName}:${server.port}/v1/gateway"
+
+    private companion object {
+        /** X.509 SubjectPublicKeyInfo header for X25519, OID 1.3.101.110. */
+        val X25519_SPKI_PREFIX = byteArrayOf(
+            0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00,
+        )
+    }
 }
