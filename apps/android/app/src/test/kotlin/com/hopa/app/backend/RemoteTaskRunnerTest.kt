@@ -17,6 +17,7 @@ import com.hopa.core.ports.DevicePort
 import com.hopa.core.ports.InstalledApp
 import com.hopa.data.settings.AppSettings
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
@@ -166,6 +167,61 @@ class RemoteTaskRunnerTest {
         assertEquals("E_BUDGET", fixture.link.frames.last().body["code"]?.jsonPrimitive?.contentOrNull)
         assertTrue(fixture.log.claim("t-timeout"))
     }
+
+    @Test
+    fun `a surface that never answers is a retryable device error`() = runBlocking {
+        val fixture = Fixture(
+            locked = false,
+            surface = { awaitCancellation() },
+            surfaceTimeoutMs = 50,
+        )
+
+        fixture.runner.handle(delivery("t-stall"))
+
+        assertEquals(listOf("task.ack", "task.error"), fixture.link.frames.map { it.type })
+        val error = fixture.link.frames[1]
+        assertEquals("E_DEVICE", error.body["code"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("true", error.body["retryable"]?.jsonPrimitive?.contentOrNull)
+        assertTrue(
+            error.body["message"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                .contains("the screen did not answer in time"),
+        )
+        // The wake bracket opened before the resolve, so it has to close too.
+        assertEquals(1, fixture.started)
+        assertEquals(1, fixture.finished)
+        assertEquals(0, fixture.runs)
+        assertEquals(0, fixture.approvals)
+        assertFalse(fixture.busyFlow.value)
+        // The id stays unclaimed, so the advised resend may run.
+        assertTrue(fixture.log.claim("t-stall"))
+    }
+
+    @Test
+    fun `a task after a stalled surface still runs`() = runBlocking {
+        var stall = true
+        val fixture = Fixture(
+            locked = false,
+            surfaceTimeoutMs = 50,
+            surface = {
+                if (stall) {
+                    awaitCancellation()
+                } else {
+                    accessibilitySurface()
+                }
+            },
+        )
+
+        fixture.runner.handle(delivery("t-stalled"))
+        stall = false
+        fixture.runner.handle(delivery("t-next"))
+
+        assertEquals(1, fixture.runs)
+        assertEquals(
+            listOf("task.ack", "task.error", "task.ack", "task.progress", "task.result"),
+            fixture.link.frames.map { it.type },
+        )
+        assertFalse(fixture.busyFlow.value)
+    }
 }
 
 private fun delivery(id: String): BackendEnvelope = BackendEnvelope(
@@ -198,8 +254,9 @@ private class Fixture(
     locked: Boolean,
     private val foreground: Boolean = true,
     busy: Boolean = false,
-    surface: () -> ScreenSourceDevice = { accessibilitySurface() },
+    surface: suspend () -> ScreenSourceDevice = { accessibilitySurface() },
     private val result: TurnResult? = TurnResult("Done."),
+    surfaceTimeoutMs: Long = 25_000L,
 ) {
     val link = RecordingLink()
     val log = log()
@@ -251,6 +308,7 @@ private class Fixture(
             events += "taskStarted"
         },
         taskFinished = { finished += 1 },
+        surfaceTimeoutMs = surfaceTimeoutMs,
     )
 }
 

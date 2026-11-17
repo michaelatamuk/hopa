@@ -26,7 +26,9 @@ import kotlinx.serialization.json.jsonPrimitive
  * then [busy] is claimed for the whole attempt so chat cannot start a second
  * loop over the same screen. The foreground service and [taskStarted] follow
  * before the surface is resolved, so the wake socket outlives a slow helper.
- * [gate] keeps two remote deliveries from running at once.
+ * The resolve itself is capped so a surface that never answers cannot hold the
+ * socket, the busy claim or [gate]; [gate] keeps two remote deliveries from
+ * running at once.
  */
 class RemoteTaskRunner(
     private val deviceId: () -> String,
@@ -46,6 +48,7 @@ class RemoteTaskRunner(
     private val taskStarted: () -> Unit = {},
     private val taskFinished: () -> Unit = {},
     private val runTimeoutMs: Long = DEFAULT_TIMEOUT_MS,
+    private val surfaceTimeoutMs: Long = DEFAULT_SURFACE_TIMEOUT_MS,
 ) {
     private val gate = Mutex()
 
@@ -77,35 +80,28 @@ class RemoteTaskRunner(
             runCatching { startService() }
             taskStarted()
             val current = settings()
-            val surface = try {
-                surfaces(current)
+            // `auto` may start the hidden helper, wait on it and connect again
+            // before the screen answers at all. Without a cap that resolve holds
+            // the gate, the busy claim and the wake bracket forever, so every
+            // later task would be delivered to a stuck runner.
+            val step = try {
+                withTimeoutOrNull(surfaceTimeoutMs) { resolve(current) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 live.send(BackendReplies.error(task, deviceId(), "E_DEVICE", NO_SCREEN, true))
                 return
             }
-            // The surface is only a candidate until it answers once; that answer
-            // is what names the path in the plan and in the reply.
-            try {
-                surface.observe()
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                // The surface refused: sourceName stays "fallback" and the
-                // planner names the setup step the person has to take.
+            if (step == null) {
+                // Nothing answered in time. The id was never claimed here, but
+                // releasing it matches the other retryable failures so the
+                // resend the message asks for is never blocked by a claim.
+                live.send(BackendReplies.error(task, deviceId(), "E_DEVICE", SURFACE_TIMEOUT, true))
+                processed.release(id)
+                return
             }
-            val state = screen(current)
-            val plan = RemoteRunPlanner.plan(
-                surfaceName = surface.sourceName,
-                screenPath = current.screenPath,
-                screenOn = state.screenOn,
-                keyguardLocked = state.keyguardLocked,
-                accessibilityOn = state.accessibilityOn,
-                // This runner already holds the claim, so the planner's own
-                // busy check would only see itself.
-                busy = false,
-            )
+            val surface = step.surface
+            val plan = step.plan
             if (plan is RemoteRunPlan.Refuse) {
                 sendRefusal(live, task, plan)
                 return
@@ -141,6 +137,37 @@ class RemoteTaskRunner(
             taskFinished()
             busy.value = false
         }
+    }
+
+    /**
+     * Resolves the surface for one delivery and plans against what the phone
+     * reports. Runs inside the surface timeout, so every suspension here is
+     * bounded by the caller's deadline.
+     */
+    private suspend fun resolve(current: AppSettings): SurfaceStep {
+        val surface = surfaces(current)
+        // The surface is only a candidate until it answers once; that answer
+        // is what names the path in the plan and in the reply.
+        try {
+            surface.observe()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            // The surface refused: sourceName stays "fallback" and the
+            // planner names the setup step the person has to take.
+        }
+        val state = screen(current)
+        val plan = RemoteRunPlanner.plan(
+            surfaceName = surface.sourceName,
+            screenPath = current.screenPath,
+            screenOn = state.screenOn,
+            keyguardLocked = state.keyguardLocked,
+            accessibilityOn = state.accessibilityOn,
+            // This runner already holds the claim, so the planner's own
+            // busy check would only see itself.
+            busy = false,
+        )
+        return SurfaceStep(surface, plan)
     }
 
     private suspend fun sendRefusal(
@@ -225,11 +252,28 @@ class RemoteTaskRunner(
     }
 
     private companion object {
+        /** The whole run, including the turn, is capped at this many millis. */
         const val DEFAULT_TIMEOUT_MS = 170_000L
+
+        /**
+         * How long resolving the surface may take. The `auto` path starts the
+         * hidden helper and reconnects before the screen is even reached, so a
+         * cold helper needs room; 25 s covers that while staying far inside the
+         * run budget and keeping a wedged surface from outliving the socket.
+         */
+        const val DEFAULT_SURFACE_TIMEOUT_MS = 25_000L
+
         const val INVALID = "the task needs an id and a goal"
         const val TIMEOUT = "the run did not finish in time"
+        const val SURFACE_TIMEOUT = "the screen did not answer in time; send it again"
         const val NO_SCREEN =
             "I cannot reach your apps: open Running apps, turn on screen access, " +
                 "start the hidden screen, or pair your computer."
     }
+
+    /** The surface that will run, with the plan the planner made for it. */
+    private class SurfaceStep(
+        val surface: ScreenSourceDevice,
+        val plan: RemoteRunPlan,
+    )
 }
