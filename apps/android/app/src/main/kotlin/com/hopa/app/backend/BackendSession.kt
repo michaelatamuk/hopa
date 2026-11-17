@@ -58,6 +58,8 @@ class BackendSession(
     @Volatile
     var onTask: (suspend (BackendEnvelope) -> Unit)? = null
 
+    /** The live socket, for the runner that answers a delivery on it. */
+    fun currentLink(): BackendLink? = link
     @Volatile
     private var link: BackendLink? = null
     private var stateJob: Job? = null

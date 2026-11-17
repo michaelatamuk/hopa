@@ -18,6 +18,8 @@ object Notifier {
     private const val ANSWER_ID = 2002
     private const val WAKE_CHANNEL = "hopa_backend"
     private const val WAKE_ID = 2003
+    private const val APPROVAL_CHANNEL = "hopa_approvals"
+    private const val APPROVAL_ID = 2004
 
     fun permissionGranted(context: Context): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
@@ -96,6 +98,42 @@ object Notifier {
             )
             .build()
         manager.notify(WAKE_ID, notification)
+        return true
+    }
+
+    /** A run waits on an approval but HOPA is not on screen. */
+    fun postApproval(context: Context): Boolean {
+        if (!permissionGranted(context)) {
+            return false
+        }
+        val manager = context.getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (manager.getNotificationChannel(APPROVAL_CHANNEL) == null) {
+                manager.createNotificationChannel(
+                    NotificationChannel(
+                        APPROVAL_CHANNEL,
+                        "Approvals",
+                        NotificationManager.IMPORTANCE_HIGH,
+                    ).apply { description = "Shown when a task waits for your OK" },
+                )
+            }
+        }
+        val notification = NotificationCompat.Builder(context, APPROVAL_CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle("HOPA needs your OK")
+            .setContentText("A task is waiting for you to approve a step.")
+            .setAutoCancel(true)
+            .setContentIntent(
+                android.app.PendingIntent.getActivity(
+                    context,
+                    5,
+                    android.content.Intent(context, MainActivity::class.java)
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    android.app.PendingIntent.FLAG_IMMUTABLE,
+                ),
+            )
+            .build()
+        manager.notify(APPROVAL_ID, notification)
         return true
     }
 
