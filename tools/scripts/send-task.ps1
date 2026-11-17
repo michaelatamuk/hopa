@@ -38,7 +38,9 @@
     Device name shown in the household. Defaults to the computer name.
 
 .PARAMETER Force
-    Pair again even when a token file already exists.
+    Pair again even when a token file already exists. Without -HouseholdId or
+    -Link, the new session joins the household already stored, so the phone
+    stays reachable.
 
 .PARAMETER TimeoutSec
     How long to wait for task.result or task.error. Defaults to 200 seconds.
@@ -148,9 +150,22 @@ if (-not $Name -or -not $Name.Trim()) {
 
 if ($Pair) {
     $existing = Read-Tokens $tokensPath
+    $existingHousehold = ""
+    if ($existing -and $existing.householdId) {
+        $existingHousehold = [string]$existing.householdId
+    }
+    # A pasted link or an explicit household is a request to pair now, even
+    # though a device is already stored. Silently keeping the old identity
+    # would make the fresh link look consumed when it was never used.
+    $explicitPairing = ($Link -and $Link.Trim()) -or ($HouseholdId -and $HouseholdId.Trim())
+
     if ($existing -and $existing.accessToken -and -not $Force) {
-        Write-Output "already paired windows device $($existing.deviceId); delete $tokensPath to pair again"
-        exit 0
+        if (-not $explicitPairing) {
+            $keeps = if ($existingHousehold) { " (keeps household $existingHousehold)" } else { "" }
+            Write-Output "already paired windows device $($existing.deviceId); run send-task.ps1 -Pair -Force to pair again$keeps"
+            exit 0
+        }
+        Write-Output "re-pairing windows device $($existing.deviceId) from the explicit request"
     }
 
     $pairLink = $Link
@@ -159,9 +174,15 @@ if ($Pair) {
         if (-not (Test-Path -LiteralPath $mint)) {
             Stop-WithMessage "pair-device.ps1 is missing next to this script"
         }
+        # Re-pairing must not move the PC to a fresh household: the phone is
+        # still in the old one. -HouseholdId or -Link overrides this default.
+        $joinHousehold = $HouseholdId
+        if (-not $joinHousehold -and $existingHousehold) {
+            $joinHousehold = $existingHousehold
+        }
         $mintArgs = @("-LinkOnly")
-        if ($HouseholdId) {
-            $mintArgs += @("-HouseholdId", $HouseholdId.Trim())
+        if ($joinHousehold) {
+            $mintArgs += @("-HouseholdId", $joinHousehold.Trim())
         }
         $minted = & $mint @mintArgs
         if ($LASTEXITCODE -ne 0) {
