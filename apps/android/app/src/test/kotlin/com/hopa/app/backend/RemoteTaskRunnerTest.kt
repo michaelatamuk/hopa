@@ -31,7 +31,7 @@ import org.junit.Test
 class RemoteTaskRunnerTest {
     @Test
     fun `a locked phone is acked before it is refused`() = runBlocking {
-        val fixture = Fixture(locked = true)
+        val fixture = Fixture(locked = true, foreground = false)
 
         fixture.runner.handle(delivery("t-locked"))
 
@@ -43,6 +43,8 @@ class RemoteTaskRunnerTest {
             error.body["message"]?.jsonPrimitive?.contentOrNull,
         )
         assertEquals("true", error.body["retryable"]?.jsonPrimitive?.contentOrNull)
+        // A refusal has nothing to approve, even when HOPA is not visible.
+        assertEquals(0, fixture.approvals)
         // A refusal never claims the id, so the advised resend can run.
         assertTrue(fixture.log.claim("t-locked"))
         assertFalse(fixture.busyFlow.value)
@@ -51,13 +53,18 @@ class RemoteTaskRunnerTest {
 
     @Test
     fun `a phone with no surface says what to set up`() = runBlocking {
-        val fixture = Fixture(locked = false, surface = { noSurface() })
+        val fixture = Fixture(
+            locked = false,
+            foreground = false,
+            surface = { noSurface() },
+        )
 
         fixture.runner.handle(delivery("t-nothing"))
 
         assertEquals(listOf("task.ack", "task.error"), fixture.link.frames.map { it.type })
         val message = fixture.link.frames[1].body["message"]?.jsonPrimitive?.contentOrNull
         assertTrue(message.orEmpty().contains("hidden screen"))
+        assertEquals(0, fixture.approvals)
         assertEquals(0, fixture.runs)
     }
 

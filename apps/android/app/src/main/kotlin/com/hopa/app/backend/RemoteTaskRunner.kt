@@ -76,11 +76,6 @@ class RemoteTaskRunner(
             // cap below still reports a budget error if it cannot finish.
             runCatching { startService() }
             taskStarted()
-            // An approval is a dialog on HOPA's own screen; when the app is not
-            // visible, the notification is the only way to find it again.
-            if (!foreground()) {
-                postApproval()
-            }
             val current = settings()
             val surface = try {
                 surfaces(current)
@@ -120,6 +115,13 @@ class RemoteTaskRunner(
                 // retryable under the id the sender was told to resend.
                 if (!processed.claim(id)) {
                     return@withLock
+                }
+                // Only a task that will actually run asks for consent: an
+                // approval is a dialog on HOPA's own screen, and a refusal has
+                // nothing to approve. When HOPA is not visible, the
+                // notification is the only way to find that dialog again.
+                if (!foreground()) {
+                    postApproval()
                 }
                 val failed = try {
                     runTurn(live, task, id, goal, surface, current)
