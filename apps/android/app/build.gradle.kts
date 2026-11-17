@@ -109,6 +109,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 
@@ -117,4 +119,10 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     testImplementation(project(":testing"))
+}
+
+// A fresh clone has no google-services.json and still has to build; the
+// Firebase config is fetched per machine and never committed.
+if (file("google-services.json").exists()) {
+    apply(plugin = "com.google.gms.google-services")
 }

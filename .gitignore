@@ -95,6 +95,8 @@ tools/shots/
 **/*.jks
 **/*.keystore
 **/keystore.properties
+# Firebase config is fetched per machine and never committed
+apps/android/app/google-services.json
 
 # Windows packaging output
 out/

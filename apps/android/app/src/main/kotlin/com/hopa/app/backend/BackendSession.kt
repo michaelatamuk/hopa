@@ -25,10 +25,8 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * Owns the app's one gateway link: pair once, connect while HOPA is open, close
  * 30 s after it leaves, and keep a wake's socket alive until its queue drains or
- * the run that arrived finishes.
- *
- * Exactly one [BackendLink] exists at a time, including across a foreground
- * [onForeground], a wake and a refresh, because two sockets could rotate the
+ * the run ends. Exactly one [BackendLink] exists at a time, including across a
+ * foreground [onForeground], a wake and a refresh: two sockets could rotate the
  * same token family and revoke it. No token is ever logged.
  */
 class BackendSession(
@@ -91,8 +89,8 @@ class BackendSession(
     }
 
     /**
-     * Claims a pairing session and stores the identity, tokens and private key.
-     * The claim happens before any write, so a refusal leaves the old identity.
+     * Claims a pairing session and stores it. The claim happens before any write,
+     * so a refusal leaves the old identity.
      */
     suspend fun pair(link: PairingLink): Result<Unit> = try {
         val credentials = identity.claim(link, deviceName, FirebaseToken.current())
@@ -137,10 +135,15 @@ class BackendSession(
         gate.withLock { closeLink() }
     }
 
+    /** A new push token arrived: reopen so the next `device.hello` carries it. */
+    fun reconnect() = scope.launch {
+        gate.withLock { closeLink() }
+        connect()
+    }
+
     /**
      * Opens the link for a wake and arms the idle stop. The caller's scope may be
-     * short lived: the link itself lives on the session's scope so a run that
-     * outlasts the messaging service is not cut off.
+     * short lived: the link lives on the session's scope so a run outlasts it.
      */
     fun wake(scope: CoroutineScope) {
         window.cancel()
@@ -214,8 +217,7 @@ class BackendSession(
             return
         }
         // A hello.ack's queued count is the only queue signal; Live never
-        // re-emits when the queue drains, so a non-empty queue must keep the
-        // wake socket open until taskFinished() arms the clock.
+        // re-emits when the queue drains, so hold it until taskFinished().
         if (next is BackendState.Live && next.queued == 0) {
             armIdleStop()
         }
