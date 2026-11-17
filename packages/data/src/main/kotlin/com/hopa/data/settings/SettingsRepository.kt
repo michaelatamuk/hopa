@@ -21,4 +21,19 @@ interface SettingsRepository {
     suspend fun bridgeRefresh(): String
 
     suspend fun setBridgeRefresh(value: String)
+
+    suspend fun backendAccessToken(): String
+
+    suspend fun setBackendAccessToken(value: String)
+
+    suspend fun backendRefreshToken(): String
+
+    suspend fun setBackendRefreshToken(value: String)
+
+    suspend fun backendPrivateKey(): String
+
+    suspend fun setBackendPrivateKey(value: String)
+
+    /** Forget the gateway pairing: tokens and key, plus the identity fields. */
+    suspend fun clearBackend()
 }

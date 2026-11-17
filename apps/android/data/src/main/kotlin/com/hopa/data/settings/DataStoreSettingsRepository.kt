@@ -36,6 +36,9 @@ class DataStoreSettingsRepository(
             replaySkills = prefs[REPLAY_SKILLS] ?: true,
             vision = prefs[VISION] ?: false,
             trustedApps = prefs[TRUSTED_APPS] ?: emptySet(),
+            backendUrl = prefs[BACKEND_URL] ?: "",
+            backendDeviceId = prefs[BACKEND_DEVICE_ID] ?: "",
+            backendHouseholdId = prefs[BACKEND_HOUSEHOLD_ID] ?: "",
         )
     }
 
@@ -59,6 +62,9 @@ class DataStoreSettingsRepository(
             prefs[REPLAY_SKILLS] = next.replaySkills
             prefs[VISION] = next.vision
             prefs[TRUSTED_APPS] = next.trustedApps
+            prefs[BACKEND_URL] = next.backendUrl
+            prefs[BACKEND_DEVICE_ID] = next.backendDeviceId
+            prefs[BACKEND_HOUSEHOLD_ID] = next.backendHouseholdId
         }
     }
 
@@ -75,6 +81,31 @@ class DataStoreSettingsRepository(
     override suspend fun bridgeRefresh(): String = secrets.get(BRIDGE_REFRESH)
 
     override suspend fun setBridgeRefresh(value: String) = secrets.set(BRIDGE_REFRESH, value)
+
+    override suspend fun backendAccessToken(): String = secrets.get(BACKEND_ACCESS)
+
+    override suspend fun setBackendAccessToken(value: String) {
+        if (value.isBlank()) secrets.clear(BACKEND_ACCESS) else secrets.set(BACKEND_ACCESS, value)
+    }
+
+    override suspend fun backendRefreshToken(): String = secrets.get(BACKEND_REFRESH)
+
+    override suspend fun setBackendRefreshToken(value: String) {
+        if (value.isBlank()) secrets.clear(BACKEND_REFRESH) else secrets.set(BACKEND_REFRESH, value)
+    }
+
+    override suspend fun backendPrivateKey(): String = secrets.get(BACKEND_PRIVATE_KEY)
+
+    override suspend fun setBackendPrivateKey(value: String) {
+        if (value.isBlank()) secrets.clear(BACKEND_PRIVATE_KEY) else secrets.set(BACKEND_PRIVATE_KEY, value)
+    }
+
+    override suspend fun clearBackend() {
+        secrets.clear(BACKEND_ACCESS)
+        secrets.clear(BACKEND_REFRESH)
+        secrets.clear(BACKEND_PRIVATE_KEY)
+        update { it.copy(backendUrl = "", backendDeviceId = "", backendHouseholdId = "") }
+    }
 
     private companion object {
         val PROVIDER = stringPreferencesKey("provider")
@@ -94,8 +125,14 @@ class DataStoreSettingsRepository(
         val REPLAY_SKILLS = booleanPreferencesKey("replay_skills")
         val VISION = booleanPreferencesKey("vision")
         val TRUSTED_APPS = stringSetPreferencesKey("trusted_apps")
+        val BACKEND_URL = stringPreferencesKey("backend_url")
+        val BACKEND_DEVICE_ID = stringPreferencesKey("backend_device_id")
+        val BACKEND_HOUSEHOLD_ID = stringPreferencesKey("backend_household_id")
         const val MODEL_KEY = "model_key"
         const val BRIDGE_TOKEN = "bridge_token"
         const val BRIDGE_REFRESH = "bridge_refresh"
+        const val BACKEND_ACCESS = "backend_access"
+        const val BACKEND_REFRESH = "backend_refresh"
+        const val BACKEND_PRIVATE_KEY = "backend_private_key"
     }
 }

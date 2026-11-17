@@ -23,4 +23,9 @@ data class AppSettings(
     val vision: Boolean = false,
     /** Packages whose typed calls, messages and closing skip the question. */
     val trustedApps: Set<String> = emptySet(),
+    /** Address of the gateway this device is paired with. */
+    val backendUrl: String = "",
+    /** Identity this device was given when it joined the household. */
+    val backendDeviceId: String = "",
+    val backendHouseholdId: String = "",
 )
