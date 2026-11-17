@@ -57,6 +57,12 @@ class AppContainer(context: Context) {
     /** A file shared into the app, waiting in the composer. */
     val pendingAttachment = MutableStateFlow<com.hopa.data.sessions.Attachment?>(null)
     val pendingNotice = MutableStateFlow<String?>(null)
+    /** Work that must outlive an Activity, such as a one-shot launch pairing. */
+    val appScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+    )
+    /** The last launch-pairing outcome, shown on the Backend card. */
+    val backendNotice = MutableStateFlow<String?>(null)
     val intake = com.hopa.app.share.AttachmentIntake(context)
     val packages = AndroidPackageCatalog(context)
     val recorder = RoomRunRecorder(database.runRecordDao())

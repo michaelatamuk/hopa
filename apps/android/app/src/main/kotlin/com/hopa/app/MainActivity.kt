@@ -13,7 +13,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import com.hopa.app.di.AppContainer
-import com.hopa.app.feature.settings.PairInput
 import com.hopa.app.service.ScreenCaptureRequester
 import com.hopa.app.service.ScreenCaptureService
 import com.hopa.capabilities.bridge.BridgeClient
@@ -59,7 +58,10 @@ class MainActivity : ComponentActivity() {
         ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 41)
         }
-        applyLaunchConfig(intent, container)
+        // A launch pairing claims a one-shot session, so it runs only on a fresh
+        // launch (not a rotation) and on the container's scope, which outlives
+        // this Activity.
+        applyLaunchConfig(intent, container, pairBackend = savedInstanceState == null)
         // A cold-start share must copy its file too; a rotation must not copy it
         // again, because the container already holds the pending attachment.
         if (savedInstanceState == null) {
@@ -136,23 +138,33 @@ class MainActivity : ComponentActivity() {
      * form. `hopa.backendUrl` / `hopa.backendPair` pair the gateway the same
      * way. Nothing happens when the extras are absent.
      */
-    private fun applyLaunchConfig(intent: Intent, container: AppContainer) {
+    private fun applyLaunchConfig(
+        intent: Intent,
+        container: AppContainer,
+        pairBackend: Boolean = true,
+    ) {
         // The gateway is handled before the bridge's early return: a device
         // test may pair the backend while leaving the PC bridge untouched.
-        val backendUrl = intent.getStringExtra(EXTRA_BACKEND_URL)
-        val backendPair = intent.getStringExtra(EXTRA_BACKEND_PAIR)
         val backendName = intent.getStringExtra(EXTRA_BACKEND_NAME)
         if (!backendName.isNullOrBlank()) {
             com.hopa.app.backend.BackendLaunchName.value = backendName.trim()
         }
-        if (!backendUrl.isNullOrBlank() || !backendPair.isNullOrBlank()) {
-            lifecycleScope.launch {
-                val fallback = backendUrl?.trim().orEmpty()
-                val link = PairInput.normalise(backendPair.orEmpty(), fallback)
-                if (link != null) {
-                    container.backend.pair(link)
-                } else if (fallback.isNotBlank()) {
-                    container.settings.update { it.copy(backendUrl = fallback) }
+        if (pairBackend) {
+            val backendUrl = intent.getStringExtra(EXTRA_BACKEND_URL)
+            val backendPair = intent.getStringExtra(EXTRA_BACKEND_PAIR)
+            if (!backendUrl.isNullOrBlank() || !backendPair.isNullOrBlank()) {
+                // The claim runs off the Activity so a rotation cannot cancel a
+                // POST the gateway has already accepted.
+                container.appScope.launch {
+                    LaunchPairing.apply(
+                        backendUrl = backendUrl,
+                        backendPair = backendPair,
+                        notice = container.backendNotice,
+                        storeUrl = { url ->
+                            container.settings.update { it.copy(backendUrl = url) }
+                        },
+                        claim = { link -> container.backend.pair(link) },
+                    )
                 }
             }
         }

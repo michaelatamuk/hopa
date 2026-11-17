@@ -54,6 +54,15 @@ class SettingsViewModel(
                 _state.update { it.copy(backendTask = task) }
             }
         }
+        // A launch pairing runs without this screen; its refusal or failure is
+        // left in the container for the card to show here.
+        viewModelScope.launch {
+            container.backendNotice.collect { notice ->
+                if (notice != null) {
+                    _state.update { it.copy(backendStatus = notice) }
+                }
+            }
+        }
     }
 
     fun save(
