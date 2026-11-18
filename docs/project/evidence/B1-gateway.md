@@ -57,7 +57,7 @@ phone. Row 8 still needs a HarmonyOS device.
 |---|---|
 | Phone | Xiaomi 2506BPN68G (15T Pro), Android 17 / API 37, Google Play services present |
 | Install | `tools/scripts/android-device-checks.ps1 -InstallOnly` — the exec-in stager, because the host blocks `adb install`; HyperOS still needs **Install via USB** and one confirmation tap |
-| App | `0.1.0-261117-2114`, `applicationId com.hopa.android` |
+| App | `0.1.0-261117-2114` (wake run) and `0.1.0-261118-0951` (visible-screen run), `applicationId com.hopa.android` |
 | Pairing | `pair-device.ps1 -LinkOnly` → the pairing code pasted via `adb shell am start` extras; `Gateway: not an X25519 public key` exposed a real bug (desktop `XECPublicKey` vs Android's X.509-only key), fixed in `30d44c3` |
 | FCM token | fetched on start (`7cc3935`); before that the card said "FCM waiting for a token" and no wake was possible |
 | Socket | `device.hello` → `hello.ack`; a delivered task was acked `state=delivered` |
@@ -74,11 +74,28 @@ The wake is the real FCM path: the phone was off the socket for more than the
 back, the task was delivered and acked, and the locked phone answered
 `E_DEVICE` instead of pretending to run.
 
-**Open follow-up:** execution on the visible screen still refuses with
-`E_DEVICE "I cannot reach your apps"` even while the app itself shows "Ready to
-open apps" — the runner resolves no surface (`HopaAccessibilityService.instance`
-appears null on that path) although the accessibility service is bound. The
-wake, delivery and ack are unaffected; the execution half needs one more fix.
+**Closed on 2026-11-18:** the fix wave on `38adc3d` gives the planner, the
+Running apps pill and `Surfaces.resolve` one screen-access answer (HOPA's switch
+on, Android's service on, service bound). On the same phone, build
+`0.1.0-261118-0951`, with "How apps open" set to **Here**, a delivered task ran
+instead of refusing: `ack state=delivered`, then `result` (trace
+`d6caa7a4348d40d88a84498a6ac0ee49`). The phone still has no provider key, so the
+result is the stub model's answer; what this run proves is the surface half —
+the stored identity reconnects after a reboot, the runner resolves the visible
+screen, and a terminal frame comes back.
+
+Two refusals seen while getting there are the fix working as designed: with
+`bridge` selected and no PC bridge the task was refused `E_DEVICE` (no surface),
+and with Android's service on but HOPA's own switch off it was refused
+`E_CAPABILITY "screen control is off; turn on HOPA's screen access"` rather than
+the generic text.
+
+Device note for the next run: HyperOS clears `enabled_accessibility_services`
+on force-stop and on reinstall, and after re-setting it the app can report the
+service off while the system still lists it bound. Toggling HOPA's screen-access
+switch off and on rebinds it; a reboot is the reliable reset. Check both
+`dumpsys accessibility` ("Bound services") and the app's Screen access page
+("Android service: On", "Connection: Live") before sending a task.
 
 ## Carried out of week 1
 
